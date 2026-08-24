@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
 
@@ -71,6 +71,12 @@ wss.on('connection', ws => {
       return;
     }
 
+    // Защита от отсутствия data
+    if (!msg.data) {
+      log('warn', 'Сообщение без data:', msg);
+      return;
+    }
+
     const current = clients.get(ws);
     if (!current) return;
 
@@ -79,131 +85,132 @@ wss.on('connection', ws => {
       return;
     }
 
-    switch (msg.type) {
-      case 'join': {
-        current.nickname = msg.data.nickname || 'Аноним';
-        broadcast({ type: 'players', data: getOnlinePlayers() });
-        break;
-      }
-
-      case 'message': {
-        if (current.nickname === 'Аноним') break;
-        const { nickname, text } = msg.data;
-        const message = {
-          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          nickname: current.nickname,
-          text,
-          time: Date.now(),
-          reactions: {}, // объект вида { "👍": ["ник1", "ник2"] }
-        };
-        messages.push(message);
-        if (messages.length > MAX_MESSAGES) messages.shift();
-        broadcast({ type: 'message', data: message });
-        break;
-      }
-
-      case 'typing': {
-        if (current.nickname === 'Аноним') break;
-        current.isTyping = msg.data.isTyping;
-        broadcast(
-          { type: 'typing', data: { nickname: current.nickname, isTyping: current.isTyping } },
-          ws,
-        );
-        break;
-      }
-
-      case 'reaction': {
-        if (current.nickname === 'Аноним') break;
-        const { messageId, emoji } = msg.data;
-        if (!messageId) break; // ← ДОБАВЬ ЭТУ СТРОКУ (игнорируем старые сообщения без id)
-        const message = messages.find(m => m.id === messageId);
-        if (!message) break;
-
-        const reactions = message.reactions || {};
-        if (!reactions[emoji]) reactions[emoji] = [];
-        const userIndex = reactions[emoji].indexOf(current.nickname);
-        if (userIndex >= 0) {
-          reactions[emoji].splice(userIndex, 1);
-          if (reactions[emoji].length === 0) delete reactions[emoji];
-        } else {
-          // Убираем этот же эмодзи, если пользователь уже ставил другой
-          Object.keys(reactions).forEach(key => {
-            const idx = reactions[key].indexOf(current.nickname);
-            if (idx >= 0) reactions[key].splice(idx, 1);
-            if (reactions[key].length === 0) delete reactions[key];
-          });
-          reactions[emoji].push(current.nickname);
+    // Общий try-catch для всех обработчиков
+    try {
+      switch (msg.type) {
+        case 'join': {
+          current.nickname = msg.data.nickname || 'Аноним';
+          broadcast({ type: 'players', data: getOnlinePlayers() });
+          break;
         }
 
-        message.reactions = reactions;
-        broadcast({ type: 'message_update', data: message });
-        break;
-      }
+        case 'message': {
+          if (current.nickname === 'Аноним') break;
+          const { nickname, text } = msg.data;
+          const message = {
+            id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+            nickname: current.nickname,
+            text,
+            time: Date.now(),
+            reactions: {},
+          };
+          messages.push(message);
+          if (messages.length > MAX_MESSAGES) messages.shift();
+          broadcast({ type: 'message', data: message });
+          break;
+        }
 
-      case 'duel_request': {
-        const targetId = msg.data.targetId;
-        const targetWs = wsById.get(targetId);
-        if (!targetWs) break;
-        const target = clients.get(targetWs);
-        if (!target || target.id === current.id) break;
-        if (target.bannedUntil && target.bannedUntil > Date.now()) break;
+        case 'typing': {
+          if (current.nickname === 'Аноним') break;
+          current.isTyping = msg.data.isTyping;
+          broadcast(
+            { type: 'typing', data: { nickname: current.nickname, isTyping: current.isTyping } },
+            ws,
+          );
+          break;
+        }
 
-        sendTo(targetWs, {
-          type: 'duel_invite',
-          data: { fromId: current.id, fromNick: current.nickname },
-        });
-        break;
-      }
+        case 'reaction': {
+          if (current.nickname === 'Аноним') break;
+          const { messageId, emoji } = msg.data;
+          if (!messageId || !emoji) break;
 
-      case 'duel_accept': {
-        const fromId = msg.data.fromId;
-        const challengerWs = wsById.get(fromId);
-        if (!challengerWs) break;
-        const challenger = clients.get(challengerWs);
-        if (!challenger) break;
+          const message = messages.find(m => m.id === messageId);
+          if (!message) break;
 
-        current.duel = { opponent: challenger, choice: null };
-        challenger.duel = { opponent: current, choice: null };
+          const reactions = message.reactions || {};
+          if (!reactions[emoji]) reactions[emoji] = [];
 
-        sendTo(ws, { type: 'duel_start', data: { opponentNick: challenger.nickname } });
-        sendTo(challengerWs, { type: 'duel_start', data: { opponentNick: current.nickname } });
-        break;
-      }
-
-      case 'duel_choice': {
-        if (!current.duel) break;
-        current.duel.choice = msg.data.choice;
-        const opponent = current.duel.opponent;
-        if (opponent.duel && opponent.duel.choice) {
-          const result = determineWinner(current.duel.choice, opponent.duel.choice);
-          const wsCurrent = wsById.get(current.id);
-          const wsOpponent = wsById.get(opponent.id);
-
-          if (result === 'player1') {
-            current.wins += 1;
-            opponent.losses += 1;
-            opponent.bannedUntil = Date.now() + 60000;
-            sendTo(wsCurrent, { type: 'duel_result', data: { result: 'win', opponentNick: opponent.nickname } });
-            sendTo(wsOpponent, { type: 'duel_result', data: { result: 'lose', opponentNick: current.nickname } });
-            sendTo(wsOpponent, { type: 'banned', data: { until: opponent.bannedUntil } });
-          } else if (result === 'player2') {
-            opponent.wins += 1;
-            current.losses += 1;
-            current.bannedUntil = Date.now() + 60000;
-            sendTo(wsOpponent, { type: 'duel_result', data: { result: 'win', opponentNick: current.nickname } });
-            sendTo(wsCurrent, { type: 'duel_result', data: { result: 'lose', opponentNick: opponent.nickname } });
-            sendTo(wsCurrent, { type: 'banned', data: { until: current.bannedUntil } });
+          const userIndex = reactions[emoji].indexOf(current.nickname);
+          if (userIndex >= 0) {
+            reactions[emoji].splice(userIndex, 1);
+            if (reactions[emoji].length === 0) delete reactions[emoji];
           } else {
-            sendTo(wsCurrent, { type: 'duel_result', data: { result: 'draw', opponentNick: opponent.nickname } });
-            sendTo(wsOpponent, { type: 'duel_result', data: { result: 'draw', opponentNick: current.nickname } });
+            reactions[emoji].push(current.nickname);
           }
 
-          current.duel = null;
-          opponent.duel = null;
-          broadcast({ type: 'players', data: getOnlinePlayers() });
+          message.reactions = reactions;
+          broadcast({ type: 'message_update', data: message });
+          break;
         }
-        break;
+
+        case 'duel_request': {
+          const targetId = msg.data.targetId;
+          const targetWs = wsById.get(targetId);
+          if (!targetWs) break;
+          const target = clients.get(targetWs);
+          if (!target || target.id === current.id) break;
+          if (target.bannedUntil && target.bannedUntil > Date.now()) break;
+
+          sendTo(targetWs, {
+            type: 'duel_invite',
+            data: { fromId: current.id, fromNick: current.nickname },
+          });
+          break;
+        }
+
+        case 'duel_accept': {
+          const fromId = msg.data.fromId;
+          const challengerWs = wsById.get(fromId);
+          if (!challengerWs) break;
+          const challenger = clients.get(challengerWs);
+          if (!challenger) break;
+
+          current.duel = { opponent: challenger, choice: null };
+          challenger.duel = { opponent: current, choice: null };
+
+          sendTo(ws, { type: 'duel_start', data: { opponentNick: challenger.nickname } });
+          sendTo(challengerWs, { type: 'duel_start', data: { opponentNick: current.nickname } });
+          break;
+        }
+
+        case 'duel_choice': {
+          if (!current.duel) break;
+          current.duel.choice = msg.data.choice;
+          const opponent = current.duel.opponent;
+          if (opponent.duel && opponent.duel.choice) {
+            const result = determineWinner(current.duel.choice, opponent.duel.choice);
+            const wsCurrent = wsById.get(current.id);
+            const wsOpponent = wsById.get(opponent.id);
+
+            if (result === 'player1') {
+              current.wins += 1;
+              opponent.losses += 1;
+              opponent.bannedUntil = Date.now() + 60000;
+              sendTo(wsCurrent, { type: 'duel_result', data: { result: 'win', opponentNick: opponent.nickname } });
+              sendTo(wsOpponent, { type: 'duel_result', data: { result: 'lose', opponentNick: current.nickname } });
+              sendTo(wsOpponent, { type: 'banned', data: { until: opponent.bannedUntil } });
+            } else if (result === 'player2') {
+              opponent.wins += 1;
+              current.losses += 1;
+              current.bannedUntil = Date.now() + 60000;
+              sendTo(wsOpponent, { type: 'duel_result', data: { result: 'win', opponentNick: current.nickname } });
+              sendTo(wsCurrent, { type: 'duel_result', data: { result: 'lose', opponentNick: opponent.nickname } });
+              sendTo(wsCurrent, { type: 'banned', data: { until: current.bannedUntil } });
+            } else {
+              sendTo(wsCurrent, { type: 'duel_result', data: { result: 'draw', opponentNick: opponent.nickname } });
+              sendTo(wsOpponent, { type: 'duel_result', data: { result: 'draw', opponentNick: current.nickname } });
+            }
+
+            current.duel = null;
+            opponent.duel = null;
+            broadcast({ type: 'players', data: getOnlinePlayers() });
+          }
+          break;
+        }
       }
+    } catch (error) {
+      log('error', 'Ошибка обработки сообщения:', error);
     }
   });
 
