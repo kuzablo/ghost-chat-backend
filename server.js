@@ -1,4 +1,6 @@
 const WebSocket = require('ws');
+
+const VERSION = '1.0.0';
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
 
@@ -8,6 +10,11 @@ const MAX_MESSAGES = 100;
 let clientIdCounter = 0;
 const clients = new Map(); // ws -> { id, nickname, wins, losses, bannedUntil, duel }
 const wsById = new Map();   // id -> ws
+
+// Простой логгер с версией
+const log = (level, ...args) => {
+  console[level](`[CHAT v${VERSION}]`, ...args);
+};
 
 function sendTo(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
@@ -48,7 +55,9 @@ wss.on('connection', ws => {
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
-  console.log('Новый участник:', client.id);
+  log('info', `Новый участник: ${client.id}`);
+  // Отправляем версию клиенту
+  ws.send(JSON.stringify({ type: 'version', data: VERSION }));
 
   ws.send(JSON.stringify({ type: 'history', data: messages }));
   broadcast({ type: 'players', data: getOnlinePlayers() });
@@ -58,6 +67,7 @@ wss.on('connection', ws => {
     try {
       msg = JSON.parse(data.toString());
     } catch (e) {
+      log('error', 'Ошибка парсинга сообщения:', e.message);
       return;
     }
 
@@ -127,7 +137,7 @@ wss.on('connection', ws => {
           if (result === 'player1') {
             current.wins += 1;
             opponent.losses += 1;
-            opponent.bannedUntil = Date.now() + 60000; // бан 60 сек
+            opponent.bannedUntil = Date.now() + 60000;
             sendTo(wsCurrent, { type: 'duel_result', data: { result: 'win', opponentNick: opponent.nickname } });
             sendTo(wsOpponent, { type: 'duel_result', data: { result: 'lose', opponentNick: current.nickname } });
             sendTo(wsOpponent, { type: 'banned', data: { until: opponent.bannedUntil } });
@@ -152,10 +162,16 @@ wss.on('connection', ws => {
     }
   });
 
+  ws.on('error', err => {
+    log('error', `WebSocket error (client ${client.id}):`, err.message);
+  });
+
   ws.on('close', () => {
     clients.delete(ws);
     wsById.delete(client.id);
     broadcast({ type: 'players', data: getOnlinePlayers() });
-    console.log('Участник вышел:', client.id);
+    log('info', `Участник вышел: ${client.id}`);
   });
 });
+
+log('info', `Сервер запущен на порту ${PORT}`);
