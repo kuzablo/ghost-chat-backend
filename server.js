@@ -115,6 +115,7 @@ wss.on('connection', ws => {
       case 'reaction': {
         if (current.nickname === 'Аноним') break;
         const { messageId, emoji } = msg.data;
+        if (!messageId) break; // ← ДОБАВЬ ЭТУ СТРОКУ (игнорируем старые сообщения без id)
         const message = messages.find(m => m.id === messageId);
         if (!message) break;
 
