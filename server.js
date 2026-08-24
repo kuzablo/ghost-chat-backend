@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
 
@@ -8,10 +8,9 @@ const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map(); // ws -> { id, nickname, wins, losses, bannedUntil, duel }
-const wsById = new Map();   // id -> ws
+const clients = new Map();
+const wsById = new Map();
 
-// Простой логгер с версией
 const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
 };
@@ -20,8 +19,10 @@ function sendTo(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function broadcast(payload) {
-  wss.clients.forEach(ws => sendTo(ws, payload));
+function broadcast(payload, exceptWs = null) {
+  wss.clients.forEach(ws => {
+    if (ws !== exceptWs) sendTo(ws, payload);
+  });
 }
 
 function getOnlinePlayers() {
@@ -51,14 +52,13 @@ wss.on('connection', ws => {
     losses: 0,
     bannedUntil: null,
     duel: null,
+    isTyping: false,
   };
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
   log('info', `Новый участник: ${client.id}`);
-  // Отправляем версию клиенту
   ws.send(JSON.stringify({ type: 'version', data: VERSION }));
-
   ws.send(JSON.stringify({ type: 'history', data: messages }));
   broadcast({ type: 'players', data: getOnlinePlayers() });
 
@@ -87,12 +87,22 @@ wss.on('connection', ws => {
       }
 
       case 'message': {
-        if (current.nickname === 'Аноним') break; // блокируем анонимов
+        if (current.nickname === 'Аноним') break;
         const { nickname, text } = msg.data;
         const message = { nickname: current.nickname, text, time: Date.now() };
         messages.push(message);
         if (messages.length > MAX_MESSAGES) messages.shift();
         broadcast({ type: 'message', data: message });
+        break;
+      }
+
+      case 'typing': {
+        if (current.nickname === 'Аноним') break;
+        current.isTyping = msg.data.isTyping;
+        broadcast(
+          { type: 'typing', data: { nickname: current.nickname, isTyping: current.isTyping } },
+          ws,
+        );
         break;
       }
 
