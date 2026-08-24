@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
 
@@ -89,7 +89,13 @@ wss.on('connection', ws => {
       case 'message': {
         if (current.nickname === 'Аноним') break;
         const { nickname, text } = msg.data;
-        const message = { nickname: current.nickname, text, time: Date.now() };
+        const message = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          nickname: current.nickname,
+          text,
+          time: Date.now(),
+          reactions: {}, // объект вида { "👍": ["ник1", "ник2"] }
+        };
         messages.push(message);
         if (messages.length > MAX_MESSAGES) messages.shift();
         broadcast({ type: 'message', data: message });
@@ -103,6 +109,33 @@ wss.on('connection', ws => {
           { type: 'typing', data: { nickname: current.nickname, isTyping: current.isTyping } },
           ws,
         );
+        break;
+      }
+
+      case 'reaction': {
+        if (current.nickname === 'Аноним') break;
+        const { messageId, emoji } = msg.data;
+        const message = messages.find(m => m.id === messageId);
+        if (!message) break;
+
+        const reactions = message.reactions || {};
+        if (!reactions[emoji]) reactions[emoji] = [];
+        const userIndex = reactions[emoji].indexOf(current.nickname);
+        if (userIndex >= 0) {
+          reactions[emoji].splice(userIndex, 1);
+          if (reactions[emoji].length === 0) delete reactions[emoji];
+        } else {
+          // Убираем этот же эмодзи, если пользователь уже ставил другой
+          Object.keys(reactions).forEach(key => {
+            const idx = reactions[key].indexOf(current.nickname);
+            if (idx >= 0) reactions[key].splice(idx, 1);
+            if (reactions[key].length === 0) delete reactions[key];
+          });
+          reactions[emoji].push(current.nickname);
+        }
+
+        message.reactions = reactions;
+        broadcast({ type: 'message_update', data: message });
         break;
       }
 
