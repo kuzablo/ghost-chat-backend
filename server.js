@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 const PORT = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ port: PORT });
+const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
 
 const messages = [];
 const MAX_MESSAGES = 100;
