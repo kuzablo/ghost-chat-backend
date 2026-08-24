@@ -27,7 +27,7 @@ function broadcast(payload) {
 function getOnlinePlayers() {
   const now = Date.now();
   return [...clients.values()]
-    .filter(c => !c.bannedUntil || c.bannedUntil < now)
+    .filter(c => (!c.bannedUntil || c.bannedUntil < now) && c.nickname !== 'Аноним')
     .map(c => ({ id: c.id, nickname: c.nickname, wins: c.wins, losses: c.losses }));
 }
 
@@ -87,6 +87,7 @@ wss.on('connection', ws => {
       }
 
       case 'message': {
+        if (current.nickname === 'Аноним') break; // блокируем анонимов
         const { nickname, text } = msg.data;
         const message = { nickname: current.nickname, text, time: Date.now() };
         messages.push(message);
