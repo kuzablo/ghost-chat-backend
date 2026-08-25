@@ -9,15 +9,12 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.5.1';
+const VERSION = '2.5.2';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-console.log('SUPABASE_URL:', process.env.SUPABASE_URL);
-console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY);
-console.log('JWT_SECRET:', process.env.JWT_SECRET);
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Отдельный клиент с service_role для загрузки в Storage
