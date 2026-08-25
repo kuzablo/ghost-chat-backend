@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.5.4';
+const VERSION = '2.5.5';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -17,7 +17,6 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Отдельный клиент с service_role для загрузки в Storage
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAdmin = serviceRoleKey
   ? createClient(supabaseUrl, serviceRoleKey)
@@ -25,17 +24,16 @@ const supabaseAdmin = serviceRoleKey
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Настройка multer для обработки multipart/form-data
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // максимум 10 МБ
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Загрузка изображения в Supabase Storage
+// ===== ИСПРАВЛЕННЫЙ БЛОК ЗАГРУЗКИ =====
 app.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -60,13 +58,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       throw error;
     }
 
-    const { publicURL, error: urlError } = supabaseAdmin.storage
+    // НОВЫЙ СПОСОБ получения публичного URL
+    const { data: urlData } = supabaseAdmin.storage
       .from('chat-images')
       .getPublicUrl(filePath);
+    const publicURL = urlData?.publicUrl;
 
-    if (urlError) {
-      console.error('❌ GetPublicUrl error:', urlError);
-      throw urlError;
+    if (!publicURL) {
+      throw new Error('Public URL not generated');
     }
 
     console.log('✅ File uploaded, publicURL:', publicURL);
