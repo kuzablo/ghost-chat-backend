@@ -6,9 +6,9 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.3.1';
+const VERSION = '2.4.0';
 const PORT = process.env.PORT || 3000;
-const IDLE_TIMEOUT_MS = 3 * 60 * 1000; // 3 минуты бездействия
+const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -27,13 +27,21 @@ app.post('/api/register', async (req, res) => {
     return res.status(400).json({ error: 'Nickname and password required' });
   }
 
-  const { data: existing } = await supabase
+  // Проверяем, существует ли пользователь
+  const { data: existingUser, error: findError } = await supabase
     .from('users')
-    .select('id')
+    .select('*')
     .eq('nickname', nickname)
     .single();
 
-  if (existing) {
+  if (findError && findError.code !== 'PGRST116') {
+    return res.status(500).json({ error: findError.message });
+  }
+
+  if (existingUser) {
+    if (existingUser.banned_forever) {
+      return res.status(403).json({ error: 'У нас тут таких не любят' });
+    }
     return res.status(409).json({ error: 'Nickname already taken' });
   }
 
@@ -41,7 +49,7 @@ app.post('/api/register', async (req, res) => {
 
   const { data: user, error } = await supabase
     .from('users')
-    .insert([{ nickname, password_hash }])
+    .insert([{ nickname, password_hash, role: 'user', banned_forever: false }])
     .select()
     .single();
 
@@ -49,8 +57,11 @@ app.post('/api/register', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  const token = jwt.sign({ userId: user.id, nickname: user.nickname }, JWT_SECRET);
-  res.json({ token, nickname: user.nickname });
+  const token = jwt.sign(
+    { userId: user.id, nickname: user.nickname, role: user.role },
+    JWT_SECRET
+  );
+  res.json({ token, nickname: user.nickname, role: user.role });
 });
 
 // Вход
@@ -60,14 +71,18 @@ app.post('/api/login', async (req, res) => {
     return res.status(400).json({ error: 'Nickname and password required' });
   }
 
-  const { data: user } = await supabase
+  const { data: user, error: findError } = await supabase
     .from('users')
     .select('*')
     .eq('nickname', nickname)
     .single();
 
-  if (!user) {
+  if (findError || !user) {
     return res.status(401).json({ error: 'Invalid nickname or password' });
+  }
+
+  if (user.banned_forever) {
+    return res.status(403).json({ error: 'У нас тут таких не любят' });
   }
 
   const valid = await bcrypt.compare(password, user.password_hash);
@@ -75,8 +90,11 @@ app.post('/api/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid nickname or password' });
   }
 
-  const token = jwt.sign({ userId: user.id, nickname: user.nickname }, JWT_SECRET);
-  res.json({ token, nickname: user.nickname });
+  const token = jwt.sign(
+    { userId: user.id, nickname: user.nickname, role: user.role },
+    JWT_SECRET
+  );
+  res.json({ token, nickname: user.nickname, role: user.role });
 });
 
 const server = app.listen(PORT, () => {
@@ -89,7 +107,7 @@ const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping, lastActivity, pendingInviteTimeout }
+const clients = new Map(); // ws -> { id, userId, nickname, role, wins, losses, bannedUntil, duel, isTyping, lastActivity, pendingInviteTimeout }
 const wsById = new Map();   // id -> ws
 
 const log = (level, ...args) => {
@@ -110,7 +128,7 @@ function getOnlinePlayers() {
   const now = Date.now();
   return [...clients.values()]
     .filter(c => (!c.bannedUntil || c.bannedUntil < now) && c.nickname !== 'Аноним')
-    .map(c => ({ id: c.id, userId: c.userId, nickname: c.nickname, wins: c.wins, losses: c.losses }));
+    .map(c => ({ id: c.id, userId: c.userId, nickname: c.nickname, role: c.role, wins: c.wins, losses: c.losses }));
 }
 
 function determineWinner(choice1, choice2) {
@@ -145,7 +163,11 @@ async function getPrivateHistory(userId1, userId2) {
   }));
 }
 
-// Периодическая проверка бездействия
+// Проверка роли админа
+function isAdmin(client) {
+  return client?.role === 'admin';
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ws, client] of clients.entries()) {
@@ -161,6 +183,7 @@ wss.on('connection', ws => {
     id: clientIdCounter++,
     userId: null,
     nickname: 'Аноним',
+    role: 'user',
     wins: 0,
     losses: 0,
     bannedUntil: null,
@@ -195,8 +218,27 @@ wss.on('connection', ws => {
     if (msg.type === 'auth') {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
+
+        // Проверяем в базе, не забанен ли навсегда
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('banned_forever, role')
+          .eq('id', decoded.userId)
+          .single();
+
+        if (!dbUser) {
+          ws.close(4003, 'Invalid token');
+          return;
+        }
+
+        if (dbUser.banned_forever) {
+          ws.close(4006, 'У нас тут таких не любят');
+          return;
+        }
+
         current.userId = decoded.userId;
         current.nickname = decoded.nickname;
+        current.role = dbUser.role;
         current.lastActivity = Date.now();
 
         const duplicate = [...clients.entries()].some(([sock, c]) => {
@@ -210,11 +252,11 @@ wss.on('connection', ws => {
         clearTimeout(authTimeout);
 
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
-        ws.send(JSON.stringify({ type: 'auth_ok', data: { nickname: current.nickname, userId: current.userId } }));
+        ws.send(JSON.stringify({ type: 'auth_ok', data: { nickname: current.nickname, userId: current.userId, role: current.role } }));
         ws.send(JSON.stringify({ type: 'history', data: messages }));
         broadcast({ type: 'players', data: getOnlinePlayers() });
 
-        log('info', `Пользователь авторизован: ${current.nickname}`);
+        log('info', `Пользователь авторизован: ${current.nickname} (${current.role})`);
       } catch (err) {
         ws.close(4003, 'Invalid token');
       }
@@ -223,7 +265,6 @@ wss.on('connection', ws => {
 
     if (!current.userId) return;
 
-    // Проверка бана: разрешаем приватные сообщения, набор текста и историю
     if (current.bannedUntil && current.bannedUntil > Date.now() &&
         msg.type !== 'private_message' &&
         msg.type !== 'private_typing' &&
@@ -239,6 +280,7 @@ wss.on('connection', ws => {
           const message = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             nickname: current.nickname,
+            userId: current.userId,
             text,
             time: Date.now(),
             reactions: {},
@@ -321,11 +363,7 @@ wss.on('connection', ws => {
           if (recipientWs) {
             sendTo(recipientWs, {
               type: 'private_typing',
-              data: {
-                senderId: current.userId,
-                senderNickname: current.nickname,
-                isTyping,
-              },
+              data: { senderId: current.userId, senderNickname: current.nickname, isTyping },
             });
           }
           break;
@@ -422,6 +460,54 @@ wss.on('connection', ws => {
             opponent.duel = null;
             broadcast({ type: 'players', data: getOnlinePlayers() });
           }
+          break;
+        }
+
+        // ============== АДМИНСКИЕ ФУНКЦИИ ==============
+
+        case 'ban_forever': {
+          if (!isAdmin(current)) break;
+          const { userId } = msg.data;
+          if (!userId) break;
+
+          const { error } = await supabase
+            .from('users')
+            .update({ banned_forever: true })
+            .eq('id', userId);
+
+          if (error) {
+            log('error', 'Ошибка бана:', error.message);
+            break;
+          }
+
+          // Закрываем соединение цели, если она онлайн
+          const targetWs = [...clients.entries()].find(([, c]) => c.userId === userId)?.[0];
+          if (targetWs) {
+            sendTo(targetWs, { type: 'banned_forever', data: { reason: 'У нас тут таких не любят' } });
+            targetWs.close(4006, 'У нас тут таких не любят');
+          }
+
+          broadcast({ type: 'players', data: getOnlinePlayers() });
+          break;
+        }
+
+        case 'delete_message': {
+          if (!isAdmin(current)) break;
+          const { messageId } = msg.data;
+          if (!messageId) break;
+
+          const index = messages.findIndex(m => m.id === messageId);
+          if (index !== -1) {
+            messages.splice(index, 1);
+            broadcast({ type: 'message_deleted', data: { messageId } });
+          }
+          break;
+        }
+
+        case 'watch_chat': {
+          if (!isAdmin(current)) break;
+          // Реализуем позже: просмотр переписки между двумя пользователями
+          sendTo(ws, { type: 'admin_error', data: { message: 'Функция в разработке' } });
           break;
         }
       }
