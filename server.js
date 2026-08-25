@@ -1,15 +1,95 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '1.0.3';
+const VERSION = '2.1.0';
 const PORT = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Регистрация
+app.post('/api/register', async (req, res) => {
+  const { nickname, password } = req.body;
+  if (!nickname || !password) {
+    return res.status(400).json({ error: 'Nickname and password required' });
+  }
+
+  const { data: existing } = await supabase
+    .from('users')
+    .select('id')
+    .eq('nickname', nickname)
+    .single();
+
+  if (existing) {
+    return res.status(409).json({ error: 'Nickname already taken' });
+  }
+
+  const password_hash = await bcrypt.hash(password, 10);
+
+  const { data: user, error } = await supabase
+    .from('users')
+    .insert([{ nickname, password_hash }])
+    .select()
+    .single();
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  const token = jwt.sign({ userId: user.id, nickname: user.nickname }, JWT_SECRET);
+  res.json({ token, nickname: user.nickname });
+});
+
+// Вход
+app.post('/api/login', async (req, res) => {
+  const { nickname, password } = req.body;
+  if (!nickname || !password) {
+    return res.status(400).json({ error: 'Nickname and password required' });
+  }
+
+  const { data: user } = await supabase
+    .from('users')
+    .select('*')
+    .eq('nickname', nickname)
+    .single();
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid nickname or password' });
+  }
+
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid nickname or password' });
+  }
+
+  const token = jwt.sign({ userId: user.id, nickname: user.nickname }, JWT_SECRET);
+  res.json({ token, nickname: user.nickname });
+});
+
+const server = app.listen(PORT, () => {
+  console.log(`[CHAT v${VERSION}] HTTP server listening on port ${PORT}`);
+});
+
+const wss = new WebSocket.Server({ server });
 
 const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map();
-const wsById = new Map();
+const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping }
+const wsById = new Map();   // id -> ws
 
 const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
@@ -29,7 +109,7 @@ function getOnlinePlayers() {
   const now = Date.now();
   return [...clients.values()]
     .filter(c => (!c.bannedUntil || c.bannedUntil < now) && c.nickname !== 'Аноним')
-    .map(c => ({ id: c.id, nickname: c.nickname, wins: c.wins, losses: c.losses }));
+    .map(c => ({ id: c.id, userId: c.userId, nickname: c.nickname, wins: c.wins, losses: c.losses }));
 }
 
 function determineWinner(choice1, choice2) {
@@ -44,9 +124,24 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
+async function getPrivateHistory(userId1, userId2) {
+  const { data, error } = await supabase
+    .from('private_messages')
+    .select('*')
+    .or(`and(sender_id.eq.${userId1},recipient_id.eq.${userId2}),and(sender_id.eq.${userId2},recipient_id.eq.${userId1})`)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Ошибка загрузки истории:', error);
+    return [];
+  }
+  return data || [];
+}
+
 wss.on('connection', ws => {
   const client = {
     id: clientIdCounter++,
+    userId: null,
     nickname: 'Аноним',
     wins: 0,
     losses: 0,
@@ -57,12 +152,14 @@ wss.on('connection', ws => {
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
-  log('info', `Новый участник: ${client.id}`);
-  ws.send(JSON.stringify({ type: 'version', data: VERSION }));
-  ws.send(JSON.stringify({ type: 'history', data: messages }));
-  broadcast({ type: 'players', data: getOnlinePlayers() });
+  log('info', `Новое соединение: ${client.id}`);
 
-  ws.on('message', data => {
+  // Ожидаем авторизацию
+  let authTimeout = setTimeout(() => {
+    ws.close(4001, 'Authentication required');
+  }, 10000);
+
+  ws.on('message', async (data) => {
     let msg;
     try {
       msg = JSON.parse(data.toString());
@@ -71,32 +168,50 @@ wss.on('connection', ws => {
       return;
     }
 
-    // Защита от отсутствия data
-    if (!msg.data) {
-      log('warn', 'Сообщение без data:', msg);
+    const current = clients.get(ws);
+    if (!current) return;
+
+    // Обработка авторизации
+    if (msg.type === 'auth') {
+      try {
+        const decoded = jwt.verify(msg.token, JWT_SECRET);
+        current.userId = decoded.userId;
+        current.nickname = decoded.nickname;
+
+        const duplicate = [...clients.entries()].some(([sock, c]) => {
+          return sock !== ws && c.userId === current.userId;
+        });
+        if (duplicate) {
+          ws.close(4002, 'Already connected from another device');
+          return;
+        }
+
+        clearTimeout(authTimeout);
+
+        ws.send(JSON.stringify({ type: 'version', data: VERSION }));
+        ws.send(JSON.stringify({ type: 'auth_ok', data: { nickname: current.nickname, userId: current.userId } }));
+        ws.send(JSON.stringify({ type: 'history', data: messages }));
+        broadcast({ type: 'players', data: getOnlinePlayers() });
+
+        log('info', `Пользователь авторизован: ${current.nickname}`);
+      } catch (err) {
+        ws.close(4003, 'Invalid token');
+      }
       return;
     }
 
-    const current = clients.get(ws);
-    if (!current) return;
+    // До авторизации игнорируем остальные сообщения
+    if (!current.userId) return;
 
     if (current.bannedUntil && current.bannedUntil > Date.now()) {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
 
-    // Общий try-catch для всех обработчиков
     try {
       switch (msg.type) {
-        case 'join': {
-          current.nickname = msg.data.nickname || 'Аноним';
-          broadcast({ type: 'players', data: getOnlinePlayers() });
-          break;
-        }
-
         case 'message': {
-          if (current.nickname === 'Аноним') break;
-          const { nickname, text } = msg.data;
+          const { text } = msg.data;
           const message = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             nickname: current.nickname,
@@ -111,7 +226,6 @@ wss.on('connection', ws => {
         }
 
         case 'typing': {
-          if (current.nickname === 'Аноним') break;
           current.isTyping = msg.data.isTyping;
           broadcast(
             { type: 'typing', data: { nickname: current.nickname, isTyping: current.isTyping } },
@@ -121,16 +235,13 @@ wss.on('connection', ws => {
         }
 
         case 'reaction': {
-          if (current.nickname === 'Аноним') break;
           const { messageId, emoji } = msg.data;
           if (!messageId || !emoji) break;
-
           const message = messages.find(m => m.id === messageId);
           if (!message) break;
 
           const reactions = message.reactions || {};
           if (!reactions[emoji]) reactions[emoji] = [];
-
           const userIndex = reactions[emoji].indexOf(current.nickname);
           if (userIndex >= 0) {
             reactions[emoji].splice(userIndex, 1);
@@ -141,6 +252,51 @@ wss.on('connection', ws => {
 
           message.reactions = reactions;
           broadcast({ type: 'message_update', data: message });
+          break;
+        }
+
+        case 'private_message': {
+          const { recipientId, text } = msg.data;
+          if (!recipientId || !text) break;
+
+          const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
+
+          const { data: savedMessage, error } = await supabase
+            .from('private_messages')
+            .insert([{ sender_id: current.userId, recipient_id: recipientId, content: text }])
+            .select()
+            .single();
+
+          if (error) {
+            log('error', 'Ошибка сохранения личного сообщения:', error.message);
+            break;
+          }
+
+          sendTo(ws, {
+            type: 'private_message_sent',
+            data: { id: savedMessage.id, recipientId, text, created_at: savedMessage.created_at },
+          });
+
+          if (recipientWs) {
+            sendTo(recipientWs, {
+              type: 'private_message',
+              data: {
+                id: savedMessage.id,
+                senderId: current.userId,
+                senderNickname: current.nickname,
+                text,
+                created_at: savedMessage.created_at,
+              },
+            });
+          }
+          break;
+        }
+
+        case 'private_history': {
+          const { userId } = msg.data;
+          if (!userId) break;
+          const history = await getPrivateHistory(current.userId, userId);
+          sendTo(ws, { type: 'private_history', data: { userId, messages: history } });
           break;
         }
 
@@ -219,11 +375,12 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    clearTimeout(authTimeout);
     clients.delete(ws);
     wsById.delete(client.id);
     broadcast({ type: 'players', data: getOnlinePlayers() });
-    log('info', `Участник вышел: ${client.id}`);
+    log('info', `Соединение закрыто: ${client.id}`);
   });
 });
 
-log('info', `Сервер запущен на порту ${PORT}`);
+log('info', `Сервер запущен (HTTP + WebSocket) на порту ${PORT}`);
