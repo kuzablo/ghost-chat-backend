@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.1.0';
+const VERSION = '2.1.1';
 const PORT = process.env.PORT || 3000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -88,7 +88,7 @@ const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping }
+const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping, pendingInvite }
 const wsById = new Map();   // id -> ws
 
 const log = (level, ...args) => {
@@ -148,13 +148,13 @@ wss.on('connection', ws => {
     bannedUntil: null,
     duel: null,
     isTyping: false,
+    pendingInviteTimeout: null, // таймер ожидания ответа на вызов
   };
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
   log('info', `Новое соединение: ${client.id}`);
 
-  // Ожидаем авторизацию
   let authTimeout = setTimeout(() => {
     ws.close(4001, 'Authentication required');
   }, 10000);
@@ -171,7 +171,6 @@ wss.on('connection', ws => {
     const current = clients.get(ws);
     if (!current) return;
 
-    // Обработка авторизации
     if (msg.type === 'auth') {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
@@ -200,7 +199,6 @@ wss.on('connection', ws => {
       return;
     }
 
-    // До авторизации игнорируем остальные сообщения
     if (!current.userId) return;
 
     if (current.bannedUntil && current.bannedUntil > Date.now()) {
@@ -259,6 +257,8 @@ wss.on('connection', ws => {
           const { recipientId, text } = msg.data;
           if (!recipientId || !text) break;
 
+          if (recipientId === current.userId) break; // нельзя себе
+
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
           const { data: savedMessage, error } = await supabase
@@ -305,13 +305,41 @@ wss.on('connection', ws => {
           const targetWs = wsById.get(targetId);
           if (!targetWs) break;
           const target = clients.get(targetWs);
-          if (!target || target.id === current.id) break;
+          if (!target || target.id === current.id || target.userId === current.userId) break;
           if (target.bannedUntil && target.bannedUntil > Date.now()) break;
 
+          // Если у цели уже есть неотвеченное приглашение, отменяем его
+          if (target.pendingInviteTimeout) {
+            clearTimeout(target.pendingInviteTimeout);
+            target.pendingInviteTimeout = null;
+          }
+
+          // Отправляем вызов
           sendTo(targetWs, {
             type: 'duel_invite',
             data: { fromId: current.id, fromNick: current.nickname },
           });
+
+          // Уведомляем вызывающего, что вызов доставлен
+          sendTo(ws, {
+            type: 'duel_request_sent',
+            data: { targetNick: target.nickname },
+          });
+
+          // Устанавливаем таймер 10 секунд
+          target.pendingInviteTimeout = setTimeout(() => {
+            // Если цель не приняла за 10 сек, снимаем приглашение
+            if (target.pendingInviteTimeout) {
+              clearTimeout(target.pendingInviteTimeout);
+              target.pendingInviteTimeout = null;
+              // Уведомляем вызывающего об истечении времени
+              sendTo(ws, {
+                type: 'duel_timeout',
+                data: { targetNick: target.nickname },
+              });
+            }
+          }, 10000);
+
           break;
         }
 
@@ -321,6 +349,12 @@ wss.on('connection', ws => {
           if (!challengerWs) break;
           const challenger = clients.get(challengerWs);
           if (!challenger) break;
+
+          // Сбрасываем таймер цели
+          if (current.pendingInviteTimeout) {
+            clearTimeout(current.pendingInviteTimeout);
+            current.pendingInviteTimeout = null;
+          }
 
           current.duel = { opponent: challenger, choice: null };
           challenger.duel = { opponent: current, choice: null };
@@ -376,6 +410,9 @@ wss.on('connection', ws => {
 
   ws.on('close', () => {
     clearTimeout(authTimeout);
+    if (client.pendingInviteTimeout) {
+      clearTimeout(client.pendingInviteTimeout);
+    }
     clients.delete(ws);
     wsById.delete(client.id);
     broadcast({ type: 'players', data: getOnlinePlayers() });
