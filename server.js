@@ -5,8 +5,9 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
+const multer = require('multer');
 
-const VERSION = '2.4.1'
+const VERSION = '2.5.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -14,11 +15,59 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Отдельный клиент с service_role для загрузки в Storage
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAdmin = serviceRoleKey
+  ? createClient(supabaseUrl, serviceRoleKey)
+  : supabase;
+
 const JWT_SECRET = process.env.JWT_SECRET;
+
+// Настройка multer для обработки multipart/form-data
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // максимум 10 МБ
+});
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Загрузка изображения в Supabase Storage
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const file = req.file;
+  const fileExt = file.originalname.split('.').pop();
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${fileExt}`;
+  const filePath = `public/${fileName}`; // кладём в папку public внутри бакета
+
+  try {
+    const { data, error } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    // Получаем публичный URL
+    const { publicURL, error: urlError } = supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+
+    if (urlError) throw urlError;
+
+    res.json({ imageUrl: publicURL });
+  } catch (err) {
+    console.error('Ошибка загрузки файла:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
 
 // Регистрация
 app.post('/api/register', async (req, res) => {
@@ -27,7 +76,6 @@ app.post('/api/register', async (req, res) => {
     return res.status(400).json({ error: 'Nickname and password required' });
   }
 
-  // Проверяем, существует ли пользователь
   const { data: existingUser, error: findError } = await supabase
     .from('users')
     .select('*')
@@ -219,7 +267,6 @@ wss.on('connection', ws => {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
 
-        // Проверяем в базе, не забанен ли навсегда
         const { data: dbUser } = await supabase
           .from('users')
           .select('banned_forever, role')
@@ -284,12 +331,13 @@ wss.on('connection', ws => {
     try {
       switch (msg.type) {
         case 'message': {
-          const { text } = msg.data;
+          const { text, imageUrl } = msg.data;
           const message = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             nickname: current.nickname,
             userId: current.userId,
-            text,
+            text: text || '',
+            imageUrl: imageUrl || null,
             time: Date.now(),
             reactions: {},
           };
@@ -330,15 +378,15 @@ wss.on('connection', ws => {
         }
 
         case 'private_message': {
-          const { recipientId, text } = msg.data;
-          if (!recipientId || !text) break;
+          const { recipientId, text, imageUrl } = msg.data;
+          if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
 
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
-            .insert([{ sender_id: current.userId, recipient_id: recipientId, content: text }])
+            .insert([{ sender_id: current.userId, recipient_id: recipientId, content: text || '', image_url: imageUrl || null }])
             .select()
             .single();
 
@@ -352,6 +400,7 @@ wss.on('connection', ws => {
             senderId: current.userId,
             recipientId,
             text: savedMessage.content,
+            imageUrl: savedMessage.image_url,
             created_at: savedMessage.created_at,
           };
 
@@ -488,7 +537,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Закрываем соединение цели, если она онлайн
           const targetWs = [...clients.entries()].find(([, c]) => c.userId === userId)?.[0];
           if (targetWs) {
             sendTo(targetWs, { type: 'banned_forever', data: { reason: 'У нас тут таких не любят' } });
@@ -514,7 +562,6 @@ wss.on('connection', ws => {
 
         case 'watch_chat': {
           if (!isAdmin(current)) break;
-          // Реализуем позже: просмотр переписки между двумя пользователями
           sendTo(ws, { type: 'admin_error', data: { message: 'Функция в разработке' } });
           break;
         }
