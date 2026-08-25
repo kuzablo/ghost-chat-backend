@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.5.3';
+const VERSION = '2.5.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -44,7 +44,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   const file = req.file;
   const fileExt = file.originalname.split('.').pop();
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${fileExt}`;
-  const filePath = `public/${fileName}`; // кладём в папку public внутри бакета
+  const filePath = `public/${fileName}`;
 
   try {
     const { data, error } = await supabaseAdmin.storage
@@ -55,19 +55,25 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         upsert: false,
       });
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Upload error:', error);
+      throw error;
+    }
 
-    // Получаем публичный URL
     const { publicURL, error: urlError } = supabaseAdmin.storage
       .from('chat-images')
       .getPublicUrl(filePath);
 
-    if (urlError) throw urlError;
+    if (urlError) {
+      console.error('❌ GetPublicUrl error:', urlError);
+      throw urlError;
+    }
 
+    console.log('✅ File uploaded, publicURL:', publicURL);
     res.json({ imageUrl: publicURL });
   } catch (err) {
     console.error('Ошибка загрузки файла:', err);
-    res.status(500).json({ error: 'Upload failed' });
+    res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
 
