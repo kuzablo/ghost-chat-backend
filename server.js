@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.3.0';
+const VERSION = '2.3.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000; // 3 минуты бездействия
 
@@ -125,7 +125,6 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
-// Получение истории личных сообщений с маппингом полей
 async function getPrivateHistory(userId1, userId2) {
   const { data, error } = await supabase
     .from('private_messages')
@@ -137,7 +136,6 @@ async function getPrivateHistory(userId1, userId2) {
     console.error('Ошибка загрузки истории:', error);
     return [];
   }
-  // Маппим в ожидаемый клиентом формат
   return (data || []).map(msg => ({
     id: msg.id,
     senderId: msg.sender_id,
@@ -192,10 +190,8 @@ wss.on('connection', ws => {
     const current = clients.get(ws);
     if (!current) return;
 
-    // Обновляем lastActivity при любом сообщении
     current.lastActivity = Date.now();
 
-    // Обработка авторизации
     if (msg.type === 'auth') {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
@@ -227,7 +223,11 @@ wss.on('connection', ws => {
 
     if (!current.userId) return;
 
-    if (current.bannedUntil && current.bannedUntil > Date.now()) {
+    // Проверка бана: разрешаем приватные сообщения, набор текста и историю
+    if (current.bannedUntil && current.bannedUntil > Date.now() &&
+        msg.type !== 'private_message' &&
+        msg.type !== 'private_typing' &&
+        msg.type !== 'private_history') {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
@@ -297,7 +297,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Формируем объект для клиента
           const messageForClient = {
             id: savedMessage.id,
             senderId: current.userId,
@@ -306,18 +305,10 @@ wss.on('connection', ws => {
             created_at: savedMessage.created_at,
           };
 
-          // Отправляем отправителю подтверждение (и он добавит его в свой UI)
-          sendTo(ws, {
-            type: 'private_message_sent',
-            data: messageForClient,
-          });
+          sendTo(ws, { type: 'private_message_sent', data: messageForClient });
 
-          // Если получатель онлайн, доставляем ему
           if (recipientWs) {
-            sendTo(recipientWs, {
-              type: 'private_message',
-              data: messageForClient,
-            });
+            sendTo(recipientWs, { type: 'private_message', data: messageForClient });
           }
           break;
         }
@@ -366,19 +357,13 @@ wss.on('connection', ws => {
             data: { fromId: current.id, fromNick: current.nickname },
           });
 
-          sendTo(ws, {
-            type: 'duel_request_sent',
-            data: { targetNick: target.nickname },
-          });
+          sendTo(ws, { type: 'duel_request_sent', data: { targetNick: target.nickname } });
 
           target.pendingInviteTimeout = setTimeout(() => {
             if (target.pendingInviteTimeout) {
               clearTimeout(target.pendingInviteTimeout);
               target.pendingInviteTimeout = null;
-              sendTo(ws, {
-                type: 'duel_timeout',
-                data: { targetNick: target.nickname },
-              });
+              sendTo(ws, { type: 'duel_timeout', data: { targetNick: target.nickname } });
             }
           }, 10000);
 
@@ -451,9 +436,7 @@ wss.on('connection', ws => {
 
   ws.on('close', () => {
     clearTimeout(authTimeout);
-    if (client.pendingInviteTimeout) {
-      clearTimeout(client.pendingInviteTimeout);
-    }
+    if (client.pendingInviteTimeout) clearTimeout(client.pendingInviteTimeout);
     clients.delete(ws);
     wsById.delete(client.id);
     broadcast({ type: 'players', data: getOnlinePlayers() });
