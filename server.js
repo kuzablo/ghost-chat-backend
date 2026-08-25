@@ -6,8 +6,9 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.1.1';
+const VERSION = '2.2.0';
 const PORT = process.env.PORT || 3000;
+const IDLE_TIMEOUT_MS = 60 * 1000; // 60 секунд бездействия
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -88,7 +89,7 @@ const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping, pendingInvite }
+const clients = new Map(); // ws -> { id, userId, nickname, wins, losses, bannedUntil, duel, isTyping, lastActivity, pendingInviteTimeout }
 const wsById = new Map();   // id -> ws
 
 const log = (level, ...args) => {
@@ -138,6 +139,17 @@ async function getPrivateHistory(userId1, userId2) {
   return data || [];
 }
 
+// Периодическая проверка бездействия
+setInterval(() => {
+  const now = Date.now();
+  for (const [ws, client] of clients.entries()) {
+    if (client.userId && (now - client.lastActivity) > IDLE_TIMEOUT_MS) {
+      sendTo(ws, { type: 'idle_disconnect', data: { reason: 'idle' } });
+      ws.close(4005, 'Idle timeout');
+    }
+  }
+}, 10000); // проверяем каждые 10 секунд
+
 wss.on('connection', ws => {
   const client = {
     id: clientIdCounter++,
@@ -148,13 +160,15 @@ wss.on('connection', ws => {
     bannedUntil: null,
     duel: null,
     isTyping: false,
-    pendingInviteTimeout: null, // таймер ожидания ответа на вызов
+    pendingInviteTimeout: null,
+    lastActivity: Date.now(), // начальная активность при подключении
   };
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
   log('info', `Новое соединение: ${client.id}`);
 
+  // Ожидаем авторизацию
   let authTimeout = setTimeout(() => {
     ws.close(4001, 'Authentication required');
   }, 10000);
@@ -171,11 +185,16 @@ wss.on('connection', ws => {
     const current = clients.get(ws);
     if (!current) return;
 
+    // Обновляем lastActivity при любом сообщении
+    current.lastActivity = Date.now();
+
+    // Обработка авторизации
     if (msg.type === 'auth') {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
         current.userId = decoded.userId;
         current.nickname = decoded.nickname;
+        current.lastActivity = Date.now();
 
         const duplicate = [...clients.entries()].some(([sock, c]) => {
           return sock !== ws && c.userId === current.userId;
@@ -199,6 +218,7 @@ wss.on('connection', ws => {
       return;
     }
 
+    // До авторизации игнорируем остальные сообщения
     if (!current.userId) return;
 
     if (current.bannedUntil && current.bannedUntil > Date.now()) {
@@ -256,8 +276,7 @@ wss.on('connection', ws => {
         case 'private_message': {
           const { recipientId, text } = msg.data;
           if (!recipientId || !text) break;
-
-          if (recipientId === current.userId) break; // нельзя себе
+          if (recipientId === current.userId) break;
 
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
@@ -308,31 +327,25 @@ wss.on('connection', ws => {
           if (!target || target.id === current.id || target.userId === current.userId) break;
           if (target.bannedUntil && target.bannedUntil > Date.now()) break;
 
-          // Если у цели уже есть неотвеченное приглашение, отменяем его
           if (target.pendingInviteTimeout) {
             clearTimeout(target.pendingInviteTimeout);
             target.pendingInviteTimeout = null;
           }
 
-          // Отправляем вызов
           sendTo(targetWs, {
             type: 'duel_invite',
             data: { fromId: current.id, fromNick: current.nickname },
           });
 
-          // Уведомляем вызывающего, что вызов доставлен
           sendTo(ws, {
             type: 'duel_request_sent',
             data: { targetNick: target.nickname },
           });
 
-          // Устанавливаем таймер 10 секунд
           target.pendingInviteTimeout = setTimeout(() => {
-            // Если цель не приняла за 10 сек, снимаем приглашение
             if (target.pendingInviteTimeout) {
               clearTimeout(target.pendingInviteTimeout);
               target.pendingInviteTimeout = null;
-              // Уведомляем вызывающего об истечении времени
               sendTo(ws, {
                 type: 'duel_timeout',
                 data: { targetNick: target.nickname },
@@ -350,7 +363,6 @@ wss.on('connection', ws => {
           const challenger = clients.get(challengerWs);
           if (!challenger) break;
 
-          // Сбрасываем таймер цели
           if (current.pendingInviteTimeout) {
             clearTimeout(current.pendingInviteTimeout);
             current.pendingInviteTimeout = null;
