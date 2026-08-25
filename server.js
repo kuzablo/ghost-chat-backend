@@ -6,9 +6,9 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const PORT = process.env.PORT || 3000;
-const IDLE_TIMEOUT_MS = 60 * 1000; // 60 секунд бездействия
+const IDLE_TIMEOUT_MS = 3 * 60 * 1000; // 3 минуты бездействия
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -125,6 +125,7 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
+// Получение истории личных сообщений с маппингом полей
 async function getPrivateHistory(userId1, userId2) {
   const { data, error } = await supabase
     .from('private_messages')
@@ -136,7 +137,14 @@ async function getPrivateHistory(userId1, userId2) {
     console.error('Ошибка загрузки истории:', error);
     return [];
   }
-  return data || [];
+  // Маппим в ожидаемый клиентом формат
+  return (data || []).map(msg => ({
+    id: msg.id,
+    senderId: msg.sender_id,
+    recipientId: msg.recipient_id,
+    text: msg.content,
+    created_at: msg.created_at,
+  }));
 }
 
 // Периодическая проверка бездействия
@@ -148,7 +156,7 @@ setInterval(() => {
       ws.close(4005, 'Idle timeout');
     }
   }
-}, 10000); // проверяем каждые 10 секунд
+}, 10000);
 
 wss.on('connection', ws => {
   const client = {
@@ -161,14 +169,13 @@ wss.on('connection', ws => {
     duel: null,
     isTyping: false,
     pendingInviteTimeout: null,
-    lastActivity: Date.now(), // начальная активность при подключении
+    lastActivity: Date.now(),
   };
   clients.set(ws, client);
   wsById.set(client.id, ws);
 
   log('info', `Новое соединение: ${client.id}`);
 
-  // Ожидаем авторизацию
   let authTimeout = setTimeout(() => {
     ws.close(4001, 'Authentication required');
   }, 10000);
@@ -218,7 +225,6 @@ wss.on('connection', ws => {
       return;
     }
 
-    // До авторизации игнорируем остальные сообщения
     if (!current.userId) return;
 
     if (current.bannedUntil && current.bannedUntil > Date.now()) {
@@ -291,20 +297,43 @@ wss.on('connection', ws => {
             break;
           }
 
+          // Формируем объект для клиента
+          const messageForClient = {
+            id: savedMessage.id,
+            senderId: current.userId,
+            recipientId,
+            text: savedMessage.content,
+            created_at: savedMessage.created_at,
+          };
+
+          // Отправляем отправителю подтверждение (и он добавит его в свой UI)
           sendTo(ws, {
             type: 'private_message_sent',
-            data: { id: savedMessage.id, recipientId, text, created_at: savedMessage.created_at },
+            data: messageForClient,
           });
 
+          // Если получатель онлайн, доставляем ему
           if (recipientWs) {
             sendTo(recipientWs, {
               type: 'private_message',
+              data: messageForClient,
+            });
+          }
+          break;
+        }
+
+        case 'private_typing': {
+          const { recipientId, isTyping } = msg.data;
+          if (!recipientId) break;
+
+          const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
+          if (recipientWs) {
+            sendTo(recipientWs, {
+              type: 'private_typing',
               data: {
-                id: savedMessage.id,
                 senderId: current.userId,
                 senderNickname: current.nickname,
-                text,
-                created_at: savedMessage.created_at,
+                isTyping,
               },
             });
           }
