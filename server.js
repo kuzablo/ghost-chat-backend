@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 
-const VERSION = '2.4.0';
+const VERSION = '2.4.1'
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -252,7 +252,15 @@ wss.on('connection', ws => {
         clearTimeout(authTimeout);
 
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
-        ws.send(JSON.stringify({ type: 'auth_ok', data: { nickname: current.nickname, userId: current.userId, role: current.role } }));
+        ws.send(JSON.stringify({
+          type: 'auth_ok',
+          data: {
+            nickname: current.nickname,
+            userId: current.userId,
+            role: current.role,
+            serverVersion: VERSION // <-- отдаём версию сервера
+          }
+        }));
         ws.send(JSON.stringify({ type: 'history', data: messages }));
         broadcast({ type: 'players', data: getOnlinePlayers() });
 
