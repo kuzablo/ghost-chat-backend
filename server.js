@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.6.5';
+const VERSION = '2.6.6';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -33,7 +33,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===== ИСПРАВЛЕННЫЙ БЛОК ЗАГРУЗКИ =====
+// ===== ЗАГРУЗКА ФАЙЛОВ =====
 app.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -58,7 +58,6 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       throw error;
     }
 
-    // НОВЫЙ СПОСОБ получения публичного URL
     const { data: urlData } = supabaseAdmin.storage
       .from('chat-images')
       .getPublicUrl(filePath);
@@ -76,7 +75,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// Регистрация
+// ===== РЕГИСТРАЦИЯ =====
 app.post('/api/register', async (req, res) => {
   const { nickname, password } = req.body;
   if (!nickname || !password) {
@@ -119,7 +118,7 @@ app.post('/api/register', async (req, res) => {
   res.json({ token, nickname: user.nickname, role: user.role });
 });
 
-// Вход
+// ===== ВХОД =====
 app.post('/api/login', async (req, res) => {
   const { nickname, password } = req.body;
   if (!nickname || !password) {
@@ -162,8 +161,8 @@ const messages = [];
 const MAX_MESSAGES = 100;
 
 let clientIdCounter = 0;
-const clients = new Map(); // ws -> { id, userId, nickname, role, wins, losses, bannedUntil, duel, isTyping, lastActivity, pendingInviteTimeout }
-const wsById = new Map();   // id -> ws
+const clients = new Map();
+const wsById = new Map();
 
 const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
@@ -218,7 +217,6 @@ async function getPrivateHistory(userId1, userId2) {
   }));
 }
 
-// Проверка роли админа
 function isAdmin(client) {
   return client?.role === 'admin';
 }
@@ -312,11 +310,28 @@ wss.on('connection', ws => {
             nickname: current.nickname,
             userId: current.userId,
             role: current.role,
-            serverVersion: VERSION // <-- отдаём версию сервера
+            serverVersion: VERSION
           }
         }));
         ws.send(JSON.stringify({ type: 'history', data: messages }));
         broadcast({ type: 'players', data: getOnlinePlayers() });
+
+        // ----- ДЛЯ РАЗРАБОТЧИКА: отправка входящих запросов в друзья -----
+        const { data: pendingRequests } = await supabase
+          .from('friend_requests')
+          .select('id, sender_id, sender:nickname')
+          .eq('receiver_id', current.userId)
+          .eq('status', 'pending');
+        if (pendingRequests) {
+          ws.send(JSON.stringify({
+            type: 'friend_requests_list',
+            data: pendingRequests.map(r => ({
+              requestId: r.id,
+              senderId: r.sender_id,
+              senderNickname: r.sender?.nickname || 'Unknown'
+            }))
+          }));
+        }
 
         log('info', `Пользователь авторизован: ${current.nickname} (${current.role})`);
       } catch (err) {
@@ -570,6 +585,130 @@ wss.on('connection', ws => {
         case 'watch_chat': {
           if (!isAdmin(current)) break;
           sendTo(ws, { type: 'admin_error', data: { message: 'Функция в разработке' } });
+          break;
+        }
+
+        // ============== ДРУЗЬЯ ==============
+
+        case 'friend_request': {
+          const { receiverId } = msg.data;
+          if (!receiverId || receiverId === current.userId) break;
+
+          const { data: receiver, error: userError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', receiverId)
+            .single();
+          if (userError || !receiver) break;
+
+          const { data: existing, error: existError } = await supabase
+            .from('friend_requests')
+            .select('id')
+            .eq('sender_id', current.userId)
+            .eq('receiver_id', receiverId)
+            .eq('status', 'pending')
+            .single();
+          if (existing) break;
+
+          const { data: request, error: insertError } = await supabase
+            .from('friend_requests')
+            .insert([{
+              sender_id: current.userId,
+              receiver_id: receiverId,
+              status: 'pending'
+            }])
+            .select()
+            .single();
+
+          if (insertError) {
+            log('error', 'Ошибка создания запроса:', insertError.message);
+            break;
+          }
+
+          const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
+          if (receiverWs) {
+            sendTo(receiverWs, {
+              type: 'new_friend_request',
+              data: {
+                requestId: request.id,
+                senderId: current.userId,
+                senderNickname: current.nickname,
+              }
+            });
+          }
+          break;
+        }
+
+        case 'friend_request_accept': {
+          const { requestId } = msg.data;
+          if (!requestId) break;
+
+          const { data: request, error: findError } = await supabase
+            .from('friend_requests')
+            .select('sender_id, receiver_id')
+            .eq('id', requestId)
+            .eq('receiver_id', current.userId)
+            .eq('status', 'pending')
+            .single();
+
+          if (findError || !request) {
+            log('error', 'Запрос не найден или уже обработан');
+            break;
+          }
+
+          const { error: friendError } = await supabase
+            .from('friends')
+            .insert([
+              { user_id: current.userId, friend_id: request.sender_id },
+              { user_id: request.sender_id, friend_id: current.userId }
+            ]);
+
+          if (friendError) {
+            log('error', 'Ошибка добавления друзей:', friendError.message);
+            break;
+          }
+
+          await supabase
+            .from('friend_requests')
+            .update({ status: 'accepted' })
+            .eq('id', requestId);
+
+          const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
+          if (senderWs) {
+            sendTo(senderWs, {
+              type: 'friend_request_accepted',
+              data: { userId: current.userId, nickname: current.nickname }
+            });
+          }
+          break;
+        }
+
+        case 'friend_request_decline': {
+          const { requestId } = msg.data;
+          if (!requestId) break;
+
+          const { data: request, error: findError } = await supabase
+            .from('friend_requests')
+            .select('sender_id, receiver_id')
+            .eq('id', requestId)
+            .eq('receiver_id', current.userId)
+            .eq('status', 'pending')
+            .single();
+
+          if (findError || !request) break;
+
+          await supabase
+            .from('friend_requests')
+            .update({ status: 'declined' })
+            .eq('id', requestId);
+
+          const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
+          if (senderWs) {
+            sendTo(senderWs, {
+              type: 'friend_request_declined',
+              data: { userId: current.userId, nickname: current.nickname }
+            });
+          }
           break;
         }
       }
