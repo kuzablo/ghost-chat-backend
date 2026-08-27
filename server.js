@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.6.9';
+const VERSION = '2.8.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
