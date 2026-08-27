@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.6.8';
+const VERSION = '2.6.9';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -625,13 +625,11 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Уведомление отправителю
           sendTo(ws, {
             type: 'friend_request_sent',
             data: { receiverId, receiverNickname: receiver.nickname }
           });
 
-          // Уведомление получателю
           const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
           if (receiverWs) {
             sendTo(receiverWs, {
@@ -663,7 +661,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Получаем ник отправителя
           const { data: senderUser } = await supabase
             .from('users')
             .select('nickname')
@@ -688,7 +685,6 @@ wss.on('connection', ws => {
             .update({ status: 'accepted' })
             .eq('id', requestId);
 
-          // Уведомление обоим
           const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
           const notifyData = {
             type: 'friend_request_accepted_notification',
@@ -700,22 +696,31 @@ wss.on('connection', ws => {
             }
           };
           if (senderWs) sendTo(senderWs, notifyData);
-          sendTo(ws, notifyData); // текущему
+          sendTo(ws, notifyData);
 
-          // Отправить обновлённый список друзей обоим
+          // ОБНОВЛЁННЫЙ ЗАПРОС СПИСКА ДРУЗЕЙ
           const sendFriendsList = async (userId, wsTo) => {
-            const { data: friends } = await supabase
+            const { data: friendIds } = await supabase
               .from('friends')
-              .select('friend_id, users!inner(nickname)')
+              .select('friend_id')
               .eq('user_id', userId);
-            if (friends) {
-              wsTo.send(JSON.stringify({
-                type: 'friends_list',
-                data: friends.map(f => ({
-                  userId: f.friend_id,
-                  nickname: f.users.nickname
-                }))
-              }));
+            if (friendIds && friendIds.length > 0) {
+              const ids = friendIds.map(f => f.friend_id);
+              const { data: users } = await supabase
+                .from('users')
+                .select('id, nickname')
+                .in('id', ids);
+              if (users) {
+                wsTo.send(JSON.stringify({
+                  type: 'friends_list',
+                  data: users.map(u => ({
+                    userId: u.id,
+                    nickname: u.nickname
+                  }))
+                }));
+              }
+            } else {
+              wsTo.send(JSON.stringify({ type: 'friends_list', data: [] }));
             }
           };
           await sendFriendsList(current.userId, ws);
@@ -753,18 +758,33 @@ wss.on('connection', ws => {
         }
 
         case 'get_friends': {
-          const { data: friends, error } = await supabase
+          console.log('📨 Запрос друзей от:', current.userId);
+          const { data: friendIds, error } = await supabase
             .from('friends')
-            .select('friend_id, users!inner(nickname)')
+            .select('friend_id')
             .eq('user_id', current.userId);
-          if (!error && friends) {
-            ws.send(JSON.stringify({
-              type: 'friends_list',
-              data: friends.map(f => ({
-                userId: f.friend_id,
-                nickname: f.users.nickname
-              }))
-            }));
+          console.log('📨 friendIds:', friendIds);
+          if (!error && friendIds && friendIds.length > 0) {
+            const ids = friendIds.map(f => f.friend_id);
+            const { data: users, error: userError } = await supabase
+              .from('users')
+              .select('id, nickname')
+              .in('id', ids);
+            if (!userError && users) {
+              ws.send(JSON.stringify({
+                type: 'friends_list',
+                data: users.map(u => ({
+                  userId: u.id,
+                  nickname: u.nickname
+                }))
+              }));
+            } else {
+              console.warn('Ошибка получения ников друзей:', userError);
+            }
+          } else if (friendIds && friendIds.length === 0) {
+            ws.send(JSON.stringify({ type: 'friends_list', data: [] }));
+          } else {
+            console.warn('Ошибка получения друзей:', error);
           }
           break;
         }
