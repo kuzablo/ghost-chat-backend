@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.6.7';
+const VERSION = '2.6.8';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -596,7 +596,7 @@ wss.on('connection', ws => {
 
           const { data: receiver, error: userError } = await supabase
             .from('users')
-            .select('id')
+            .select('id, nickname')
             .eq('id', receiverId)
             .single();
           if (userError || !receiver) break;
@@ -625,6 +625,13 @@ wss.on('connection', ws => {
             break;
           }
 
+          // Уведомление отправителю
+          sendTo(ws, {
+            type: 'friend_request_sent',
+            data: { receiverId, receiverNickname: receiver.nickname }
+          });
+
+          // Уведомление получателю
           const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
           if (receiverWs) {
             sendTo(receiverWs, {
