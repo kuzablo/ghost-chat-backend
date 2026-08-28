@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.9.0';
+const VERSION = '2.10.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -214,6 +214,7 @@ async function getPrivateHistory(userId1, userId2) {
     recipientId: msg.recipient_id,
     text: msg.content,
     created_at: msg.created_at,
+    is_read: msg.is_read || false,
   }));
 }
 
@@ -406,15 +407,12 @@ wss.on('connection', ws => {
           const message = messages.find(m => m.id === messageId);
           if (!message) break;
 
-          // Проверяем, что пользователь – автор сообщения
           if (message.userId !== current.userId) {
             log('warn', `Попытка редактировать чужое сообщение: ${current.nickname}`);
             break;
           }
 
-          // Обновляем текст
           message.text = text;
-          // Рассылаем обновление всем
           broadcast({ type: 'message_update', data: message });
           break;
         }
@@ -428,7 +426,13 @@ wss.on('connection', ws => {
 
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
-            .insert([{ sender_id: current.userId, recipient_id: recipientId, content: text || '', image_url: imageUrl || null }])
+            .insert([{ 
+              sender_id: current.userId, 
+              recipient_id: recipientId, 
+              content: text || '', 
+              image_url: imageUrl || null,
+              is_read: false
+            }])
             .select()
             .single();
 
@@ -444,12 +448,30 @@ wss.on('connection', ws => {
             text: savedMessage.content,
             imageUrl: savedMessage.image_url,
             created_at: savedMessage.created_at,
+            is_read: false,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
 
           if (recipientWs) {
             sendTo(recipientWs, { type: 'private_message', data: messageForClient });
+          }
+          break;
+        }
+
+        case 'mark_read': {
+          const { senderId } = msg.data;
+          if (!senderId) break;
+
+          const { error } = await supabase
+            .from('private_messages')
+            .update({ is_read: true })
+            .eq('sender_id', senderId)
+            .eq('recipient_id', current.userId)
+            .eq('is_read', false);
+
+          if (error) {
+            log('error', 'Ошибка отметки прочитанных:', error.message);
           }
           break;
         }
@@ -597,7 +619,6 @@ wss.on('connection', ws => {
           if (index === -1) break;
 
           const message = messages[index];
-          // Если пользователь не автор и не админ – запрещаем
           if (message.userId !== current.userId && !isAdmin(current)) {
             log('warn', `Попытка удалить чужое сообщение: ${current.nickname}`);
             break;
