@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.10.3';
+const VERSION = '2.10.9';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -680,6 +680,7 @@ wss.on('connection', ws => {
             .single();
           if (userError || !receiver) break;
 
+          // Проверяем, есть ли уже запрос в статусе pending от текущего пользователя к этому получателю
           const { data: existing, error: existError } = await supabase
             .from('friend_requests')
             .select('id')
@@ -687,8 +688,13 @@ wss.on('connection', ws => {
             .eq('receiver_id', receiverId)
             .eq('status', 'pending')
             .single();
-          if (existing) break;
 
+          if (existing) {
+            // Удаляем старый запрос, чтобы отправить новый
+            await supabase.from('friend_requests').delete().eq('id', existing.id);
+          }
+
+          // Создаём новый запрос
           const { data: request, error: insertError } = await supabase
             .from('friend_requests')
             .insert([{
@@ -704,11 +710,13 @@ wss.on('connection', ws => {
             break;
           }
 
+          // Уведомление отправителю (подтверждение)
           sendTo(ws, {
             type: 'friend_request_sent',
             data: { receiverId, receiverNickname: receiver.nickname }
           });
 
+          // Уведомление получателю
           const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
           if (receiverWs) {
             sendTo(receiverWs, {
