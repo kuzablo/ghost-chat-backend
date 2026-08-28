@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.8.0';
+const VERSION = '2.9.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -399,6 +399,26 @@ wss.on('connection', ws => {
           break;
         }
 
+        case 'edit_message': {
+          const { messageId, text } = msg.data;
+          if (!messageId || !text) break;
+
+          const message = messages.find(m => m.id === messageId);
+          if (!message) break;
+
+          // Проверяем, что пользователь – автор сообщения
+          if (message.userId !== current.userId) {
+            log('warn', `Попытка редактировать чужое сообщение: ${current.nickname}`);
+            break;
+          }
+
+          // Обновляем текст
+          message.text = text;
+          // Рассылаем обновление всем
+          broadcast({ type: 'message_update', data: message });
+          break;
+        }
+
         case 'private_message': {
           const { recipientId, text, imageUrl } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
@@ -570,15 +590,21 @@ wss.on('connection', ws => {
         }
 
         case 'delete_message': {
-          if (!isAdmin(current)) break;
           const { messageId } = msg.data;
           if (!messageId) break;
 
           const index = messages.findIndex(m => m.id === messageId);
-          if (index !== -1) {
-            messages.splice(index, 1);
-            broadcast({ type: 'message_deleted', data: { messageId } });
+          if (index === -1) break;
+
+          const message = messages[index];
+          // Если пользователь не автор и не админ – запрещаем
+          if (message.userId !== current.userId && !isAdmin(current)) {
+            log('warn', `Попытка удалить чужое сообщение: ${current.nickname}`);
+            break;
           }
+
+          messages.splice(index, 1);
+          broadcast({ type: 'message_deleted', data: { messageId } });
           break;
         }
 
