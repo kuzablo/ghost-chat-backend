@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.10.2';
+const VERSION = '2.10.3';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -317,7 +317,7 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: 'history', data: messages }));
         broadcast({ type: 'players', data: getOnlinePlayers() });
 
-        // Отправка входящих запросов
+        // Отправка входящих запросов дружбы
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
           .select('id, sender_id, sender:nickname')
@@ -331,6 +331,20 @@ wss.on('connection', ws => {
               senderId: r.sender_id,
               senderNickname: r.sender?.nickname || 'Unknown'
             }))
+          }));
+        }
+
+        // Отправка списка непрочитанных приватных сообщений
+        const { data: unreadMessages } = await supabase
+          .from('private_messages')
+          .select('sender_id')
+          .eq('recipient_id', current.userId)
+          .eq('is_read', false);
+        if (unreadMessages && unreadMessages.length > 0) {
+          const senders = [...new Set(unreadMessages.map(m => m.sender_id))];
+          ws.send(JSON.stringify({
+            type: 'unread_private_list',
+            data: senders
           }));
         }
 
@@ -463,7 +477,6 @@ wss.on('connection', ws => {
           const { senderId } = msg.data;
           if (!senderId) break;
 
-          // Обновляем статус в БД
           const { error, data: updatedMessages } = await supabase
             .from('private_messages')
             .update({ is_read: true })
@@ -477,10 +490,9 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Если есть обновлённые сообщения, уведомляем отправителя
           if (updatedMessages && updatedMessages.length > 0) {
             const senderWs = [...clients.entries()].find(([, c]) => c.userId === senderId)?.[0];
-            const recipientWs = ws; // текущий пользователь
+            const recipientWs = ws;
 
             const readData = {
               senderId: senderId,
@@ -491,7 +503,6 @@ wss.on('connection', ws => {
             if (senderWs) {
               sendTo(senderWs, { type: 'message_read', data: readData });
             }
-            // Можно также отправить получателю для подтверждения, но не обязательно
             sendTo(recipientWs, { type: 'message_read', data: readData });
           }
           break;
@@ -766,7 +777,6 @@ wss.on('connection', ws => {
           if (senderWs) sendTo(senderWs, notifyData);
           sendTo(ws, notifyData);
 
-          // ОБНОВЛЁННЫЙ ЗАПРОС СПИСКА ДРУЗЕЙ
           const sendFriendsList = async (userId, wsTo) => {
             const { data: friendIds } = await supabase
               .from('friends')
