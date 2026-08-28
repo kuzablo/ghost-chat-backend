@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.10.0';
+const VERSION = '2.10.2';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -463,15 +463,36 @@ wss.on('connection', ws => {
           const { senderId } = msg.data;
           if (!senderId) break;
 
-          const { error } = await supabase
+          // Обновляем статус в БД
+          const { error, data: updatedMessages } = await supabase
             .from('private_messages')
             .update({ is_read: true })
             .eq('sender_id', senderId)
             .eq('recipient_id', current.userId)
-            .eq('is_read', false);
+            .eq('is_read', false)
+            .select('id, sender_id, recipient_id');
 
           if (error) {
             log('error', 'Ошибка отметки прочитанных:', error.message);
+            break;
+          }
+
+          // Если есть обновлённые сообщения, уведомляем отправителя
+          if (updatedMessages && updatedMessages.length > 0) {
+            const senderWs = [...clients.entries()].find(([, c]) => c.userId === senderId)?.[0];
+            const recipientWs = ws; // текущий пользователь
+
+            const readData = {
+              senderId: senderId,
+              recipientId: current.userId,
+              messageIds: updatedMessages.map(m => m.id),
+            };
+
+            if (senderWs) {
+              sendTo(senderWs, { type: 'message_read', data: readData });
+            }
+            // Можно также отправить получателю для подтверждения, но не обязательно
+            sendTo(recipientWs, { type: 'message_read', data: readData });
           }
           break;
         }
