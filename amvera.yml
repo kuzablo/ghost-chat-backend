@@ -1,0 +1,12 @@
+meta:
+  environment: node
+  toolchain:
+    name: npm
+    version: 18
+
+build:
+  additionalCommands: npm install
+
+run:
+  command: npm start
+  persistenceMount: /data
