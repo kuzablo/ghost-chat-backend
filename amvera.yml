@@ -5,8 +5,9 @@ meta:
     version: 22
 
 build:
-  additionalCommands: npm install ws
+  additionalCommands: npm install
 
 run:
   command: npm start
+  containerPort: 3000
   persistenceMount: /data
