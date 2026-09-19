@@ -2,10 +2,10 @@ meta:
   environment: node
   toolchain:
     name: npm
-    version: 18
+    version: 22
 
 build:
-  additionalCommands: npm install
+  additionalCommands: npm install ws
 
 run:
   command: npm start
