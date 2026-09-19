@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.13.0';
+const VERSION = '2.14.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -215,6 +215,7 @@ async function getPrivateHistory(userId1, userId2) {
     text: msg.content,
     created_at: msg.created_at,
     is_read: msg.is_read || false,
+    reactions: msg.reactions || {},
   }));
 }
 
@@ -445,7 +446,8 @@ wss.on('connection', ws => {
               recipient_id: recipientId, 
               content: text || '', 
               image_url: imageUrl || null,
-              is_read: false
+              is_read: false,
+              reactions: {},
             }])
             .select()
             .single();
@@ -463,6 +465,7 @@ wss.on('connection', ws => {
             imageUrl: savedMessage.image_url,
             created_at: savedMessage.created_at,
             is_read: false,
+            reactions: savedMessage.reactions || {},
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
@@ -527,6 +530,63 @@ wss.on('connection', ws => {
           if (!userId) break;
           const history = await getPrivateHistory(current.userId, userId);
           sendTo(ws, { type: 'private_history', data: { userId, messages: history } });
+          break;
+        }
+
+                case 'private_reaction': {
+          const { messageId, emoji } = msg.data;
+          if (!messageId || !emoji) break;
+
+          const { data: existing, error: fetchError } = await supabase
+            .from('private_messages')
+            .select('reactions, sender_id, recipient_id')
+            .eq('id', messageId)
+            .single();
+
+          if (fetchError || !existing) break;
+
+          const isParticipant =
+            existing.sender_id === current.userId ||
+            existing.recipient_id === current.userId;
+
+          if (!isParticipant) break;
+
+          const reactions = { ...(existing.reactions || {}) };
+          if (!reactions[emoji]) reactions[emoji] = [];
+          const idx = reactions[emoji].indexOf(current.userId);
+          if (idx >= 0) {
+            reactions[emoji].splice(idx, 1);
+            if (reactions[emoji].length === 0) delete reactions[emoji];
+          } else {
+            reactions[emoji].push(current.userId);
+          }
+
+          const { error: saveError } = await supabase
+            .from('private_messages')
+            .update({ reactions })
+            .eq('id', messageId);
+
+          if (saveError) {
+            log('error', 'Ошибка сохранения реакции:', saveError.message);
+            break;
+          }
+
+          const payload = {
+            type: 'private_reaction_update',
+            data: {
+              messageId,
+              reactions,
+              senderId: existing.sender_id,
+              recipientId: existing.recipient_id,
+            },
+          };
+
+          const senderWs = [...clients.entries()].find(([, c]) => c.userId === existing.sender_id)?.[0];
+          const recipientWs = [...clients.entries()].find(([, c]) => c.userId === existing.recipient_id)?.[0];
+
+          if (senderWs) sendTo(senderWs, payload);
+          if (recipientWs && recipientWs !== senderWs) sendTo(recipientWs, payload);
+
           break;
         }
 
