@@ -9,9 +9,12 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-const VERSION = '2.14.0';
+// [2.15.0] переход на персистентность истории в Supabase
+// [2.15.0-fix] таблица `messages` ходит через supabaseAdmin (RLS включён)
+const VERSION = '2.15.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
+const MAX_MESSAGES = 100;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -157,9 +160,6 @@ const server = app.listen(PORT, () => {
 
 const wss = new WebSocket.Server({ server });
 
-const messages = [];
-const MAX_MESSAGES = 100;
-
 let clientIdCounter = 0;
 const clients = new Map();
 const wsById = new Map();
@@ -195,6 +195,32 @@ function determineWinner(choice1, choice2) {
     return 'player1';
   }
   return 'player2';
+}
+
+// [2.15.0] единый маппинг строки БД → объект фронта
+const mapMessageRow = (row) => ({
+  id: row.id,
+  userId: row.user_id,
+  nickname: row.nickname,
+  text: row.text || '',
+  imageUrl: row.image_url || null,
+  time: Number(row.time),
+  reactions: row.reactions || {},
+});
+
+// [2.15.0-fix] через supabaseAdmin — RLS включён, anon-ключ доступа не имеет
+async function loadHistory(limit = MAX_MESSAGES) {
+  const { data, error } = await supabaseAdmin
+    .from('messages')
+    .select('*')
+    .order('time', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    log('error', 'Ошибка загрузки истории:', error.message);
+    return [];
+  }
+  return (data || []).reverse().map(mapMessageRow);
 }
 
 async function getPrivateHistory(userId1, userId2) {
@@ -315,10 +341,12 @@ wss.on('connection', ws => {
             serverVersion: VERSION
           }
         }));
-        ws.send(JSON.stringify({ type: 'history', data: messages }));
+
+        const history = await loadHistory();
+        ws.send(JSON.stringify({ type: 'history', data: history }));
+
         broadcast({ type: 'players', data: getOnlinePlayers() });
 
-        // Отправка входящих запросов дружбы
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
           .select('id, sender_id, sender:nickname')
@@ -335,7 +363,6 @@ wss.on('connection', ws => {
           }));
         }
 
-        // Отправка списка непрочитанных приватных сообщений
         const { data: unreadMessages } = await supabase
           .from('private_messages')
           .select('sender_id')
@@ -368,20 +395,26 @@ wss.on('connection', ws => {
 
     try {
       switch (msg.type) {
+        // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
           const { text, imageUrl } = msg.data;
-          const message = {
+          const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+            user_id: current.userId,
             nickname: current.nickname,
-            userId: current.userId,
             text: text || '',
-            imageUrl: imageUrl || null,
+            image_url: imageUrl || null,
             time: Date.now(),
             reactions: {},
           };
-          messages.push(message);
-          if (messages.length > MAX_MESSAGES) messages.shift();
-          broadcast({ type: 'message', data: message });
+
+          // [2.15.0-fix] supabaseAdmin
+          const { error } = await supabaseAdmin.from('messages').insert([row]);
+          if (error) {
+            log('error', 'Ошибка сохранения сообщения:', error.message);
+            break;
+          }
+          broadcast({ type: 'message', data: mapMessageRow(row) });
           break;
         }
 
@@ -397,10 +430,16 @@ wss.on('connection', ws => {
         case 'reaction': {
           const { messageId, emoji } = msg.data;
           if (!messageId || !emoji) break;
-          const message = messages.find(m => m.id === messageId);
-          if (!message) break;
 
-          const reactions = message.reactions || {};
+          // [2.15.0-fix] supabaseAdmin
+          const { data: existing, error: fetchError } = await supabaseAdmin
+            .from('messages')
+            .select('id, reactions')
+            .eq('id', messageId)
+            .single();
+          if (fetchError || !existing) break;
+
+          const reactions = { ...(existing.reactions || {}) };
           if (!reactions[emoji]) reactions[emoji] = [];
           const userIndex = reactions[emoji].indexOf(current.nickname);
           if (userIndex >= 0) {
@@ -410,8 +449,19 @@ wss.on('connection', ws => {
             reactions[emoji].push(current.nickname);
           }
 
-          message.reactions = reactions;
-          broadcast({ type: 'message_update', data: message });
+          // [2.15.0-fix] supabaseAdmin
+          const { data: updated, error: updateError } = await supabaseAdmin
+            .from('messages')
+            .update({ reactions })
+            .eq('id', messageId)
+            .select()
+            .single();
+
+          if (updateError) {
+            log('error', 'Ошибка обновления реакции:', updateError.message);
+            break;
+          }
+          broadcast({ type: 'message_update', data: mapMessageRow(updated) });
           break;
         }
 
@@ -419,19 +469,67 @@ wss.on('connection', ws => {
           const { messageId, text } = msg.data;
           if (!messageId || !text) break;
 
-          const message = messages.find(m => m.id === messageId);
-          if (!message) break;
+          // [2.15.0-fix] supabaseAdmin
+          const { data: existing, error: fetchError } = await supabaseAdmin
+            .from('messages')
+            .select('user_id')
+            .eq('id', messageId)
+            .single();
+          if (fetchError || !existing) break;
 
-          if (message.userId !== current.userId) {
+          if (existing.user_id !== current.userId) {
             log('warn', `Попытка редактировать чужое сообщение: ${current.nickname}`);
             break;
           }
 
-          message.text = text;
-          broadcast({ type: 'message_update', data: message });
+          // [2.15.0-fix] supabaseAdmin
+          const { data: updated, error: updateError } = await supabaseAdmin
+            .from('messages')
+            .update({ text })
+            .eq('id', messageId)
+            .select()
+            .single();
+
+          if (updateError) {
+            log('error', 'Ошибка редактирования:', updateError.message);
+            break;
+          }
+          broadcast({ type: 'message_update', data: mapMessageRow(updated) });
           break;
         }
 
+        case 'delete_message': {
+          const { messageId } = msg.data;
+          if (!messageId) break;
+
+          // [2.15.0-fix] supabaseAdmin
+          const { data: existing, error: fetchError } = await supabaseAdmin
+            .from('messages')
+            .select('user_id')
+            .eq('id', messageId)
+            .single();
+          if (fetchError || !existing) break;
+
+          if (existing.user_id !== current.userId && !isAdmin(current)) {
+            log('warn', `Попытка удалить чужое сообщение: ${current.nickname}`);
+            break;
+          }
+
+          // [2.15.0-fix] supabaseAdmin
+          const { error: deleteError } = await supabaseAdmin
+            .from('messages')
+            .delete()
+            .eq('id', messageId);
+
+          if (deleteError) {
+            log('error', 'Ошибка удаления:', deleteError.message);
+            break;
+          }
+          broadcast({ type: 'message_deleted', data: { messageId } });
+          break;
+        }
+
+        // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
           const { recipientId, text, imageUrl } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
@@ -441,10 +539,10 @@ wss.on('connection', ws => {
 
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
-            .insert([{ 
-              sender_id: current.userId, 
-              recipient_id: recipientId, 
-              content: text || '', 
+            .insert([{
+              sender_id: current.userId,
+              recipient_id: recipientId,
+              content: text || '',
               image_url: imageUrl || null,
               is_read: false,
               reactions: {},
@@ -533,7 +631,7 @@ wss.on('connection', ws => {
           break;
         }
 
-                case 'private_reaction': {
+        case 'private_reaction': {
           const { messageId, emoji } = msg.data;
           if (!messageId || !emoji) break;
 
@@ -590,6 +688,7 @@ wss.on('connection', ws => {
           break;
         }
 
+        // ===== ДУЭЛИ =====
         case 'duel_request': {
           const targetId = msg.data.targetId;
           const targetWs = wsById.get(targetId);
@@ -676,8 +775,7 @@ wss.on('connection', ws => {
           break;
         }
 
-        // ============== АДМИНСКИЕ ФУНКЦИИ ==============
-
+        // ===== АДМИН =====
         case 'ban_forever': {
           if (!isAdmin(current)) break;
           const { userId } = msg.data;
@@ -703,32 +801,13 @@ wss.on('connection', ws => {
           break;
         }
 
-        case 'delete_message': {
-          const { messageId } = msg.data;
-          if (!messageId) break;
-
-          const index = messages.findIndex(m => m.id === messageId);
-          if (index === -1) break;
-
-          const message = messages[index];
-          if (message.userId !== current.userId && !isAdmin(current)) {
-            log('warn', `Попытка удалить чужое сообщение: ${current.nickname}`);
-            break;
-          }
-
-          messages.splice(index, 1);
-          broadcast({ type: 'message_deleted', data: { messageId } });
-          break;
-        }
-
         case 'watch_chat': {
           if (!isAdmin(current)) break;
           sendTo(ws, { type: 'admin_error', data: { message: 'Функция в разработке' } });
           break;
         }
 
-        // ============== ДРУЗЬЯ ==============
-
+        // ===== ДРУЗЬЯ =====
         case 'friend_request': {
           const { receiverId } = msg.data;
           if (!receiverId || receiverId === current.userId) break;
@@ -740,8 +819,7 @@ wss.on('connection', ws => {
             .single();
           if (userError || !receiver) break;
 
-          // Проверяем, есть ли уже запрос в статусе pending от текущего пользователя к этому получателю
-          const { data: existing, error: existError } = await supabase
+          const { data: existing } = await supabase
             .from('friend_requests')
             .select('id')
             .eq('sender_id', current.userId)
@@ -750,11 +828,9 @@ wss.on('connection', ws => {
             .single();
 
           if (existing) {
-            // Удаляем старый запрос, чтобы отправить новый
             await supabase.from('friend_requests').delete().eq('id', existing.id);
           }
 
-          // Создаём новый запрос
           const { data: request, error: insertError } = await supabase
             .from('friend_requests')
             .insert([{
@@ -770,13 +846,11 @@ wss.on('connection', ws => {
             break;
           }
 
-          // Уведомление отправителю (подтверждение)
           sendTo(ws, {
             type: 'friend_request_sent',
             data: { receiverId, receiverNickname: receiver.nickname }
           });
 
-          // Уведомление получателю
           const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
           if (receiverWs) {
             sendTo(receiverWs, {
@@ -904,12 +978,11 @@ wss.on('connection', ws => {
         }
 
         case 'get_friends': {
-          console.log('📨 Запрос друзей от:', current.userId);
           const { data: friendIds, error } = await supabase
             .from('friends')
             .select('friend_id')
             .eq('user_id', current.userId);
-          console.log('📨 friendIds:', friendIds);
+
           if (!error && friendIds && friendIds.length > 0) {
             const ids = friendIds.map(f => f.friend_id);
             const { data: users, error: userError } = await supabase
