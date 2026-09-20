@@ -9,9 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.15.0] переход на персистентность истории в Supabase
-// [2.15.0-fix] таблица `messages` ходит через supabaseAdmin (RLS включён)
-const VERSION = '2.15.0';
+// [2.15.1] проверка recipientId при отправке личного сообщения
+const VERSION = '2.15.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -197,7 +196,6 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
-// [2.15.0] единый маппинг строки БД → объект фронта
 const mapMessageRow = (row) => ({
   id: row.id,
   userId: row.user_id,
@@ -208,7 +206,6 @@ const mapMessageRow = (row) => ({
   reactions: row.reactions || {},
 });
 
-// [2.15.0-fix] через supabaseAdmin — RLS включён, anon-ключ доступа не имеет
 async function loadHistory(limit = MAX_MESSAGES) {
   const { data, error } = await supabaseAdmin
     .from('messages')
@@ -408,7 +405,6 @@ wss.on('connection', ws => {
             reactions: {},
           };
 
-          // [2.15.0-fix] supabaseAdmin
           const { error } = await supabaseAdmin.from('messages').insert([row]);
           if (error) {
             log('error', 'Ошибка сохранения сообщения:', error.message);
@@ -431,7 +427,6 @@ wss.on('connection', ws => {
           const { messageId, emoji } = msg.data;
           if (!messageId || !emoji) break;
 
-          // [2.15.0-fix] supabaseAdmin
           const { data: existing, error: fetchError } = await supabaseAdmin
             .from('messages')
             .select('id, reactions')
@@ -449,7 +444,6 @@ wss.on('connection', ws => {
             reactions[emoji].push(current.nickname);
           }
 
-          // [2.15.0-fix] supabaseAdmin
           const { data: updated, error: updateError } = await supabaseAdmin
             .from('messages')
             .update({ reactions })
@@ -469,7 +463,6 @@ wss.on('connection', ws => {
           const { messageId, text } = msg.data;
           if (!messageId || !text) break;
 
-          // [2.15.0-fix] supabaseAdmin
           const { data: existing, error: fetchError } = await supabaseAdmin
             .from('messages')
             .select('user_id')
@@ -482,7 +475,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // [2.15.0-fix] supabaseAdmin
           const { data: updated, error: updateError } = await supabaseAdmin
             .from('messages')
             .update({ text })
@@ -502,7 +494,6 @@ wss.on('connection', ws => {
           const { messageId } = msg.data;
           if (!messageId) break;
 
-          // [2.15.0-fix] supabaseAdmin
           const { data: existing, error: fetchError } = await supabaseAdmin
             .from('messages')
             .select('user_id')
@@ -515,7 +506,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // [2.15.0-fix] supabaseAdmin
           const { error: deleteError } = await supabaseAdmin
             .from('messages')
             .delete()
@@ -534,6 +524,19 @@ wss.on('connection', ws => {
           const { recipientId, text, imageUrl } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
+
+          // [правка 2.15.1] проверяем, что получатель существует —
+          // иначе в БД останется мусорное сообщение в никуда
+          const { data: recipientUser, error: recipientError } = await supabaseAdmin
+            .from('users')
+            .select('id')
+            .eq('id', recipientId)
+            .single();
+
+          if (recipientError || !recipientUser) {
+            log('warn', `Личное сообщение несуществующему получателю: ${recipientId} (от ${current.nickname})`);
+            break;
+          }
 
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
