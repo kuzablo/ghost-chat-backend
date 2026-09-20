@@ -9,8 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.15.1] проверка recipientId при отправке личного сообщения
-const VERSION = '2.15.1';
+// [2.16.0] reply_to для сообщений (общий чат + личка)
+const VERSION = '2.16.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -196,6 +196,7 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
+// [2.16.0] replyTo маппится в объект
 const mapMessageRow = (row) => ({
   id: row.id,
   userId: row.user_id,
@@ -204,6 +205,7 @@ const mapMessageRow = (row) => ({
   imageUrl: row.image_url || null,
   time: Number(row.time),
   reactions: row.reactions || {},
+  replyTo: row.reply_to || null,
 });
 
 async function loadHistory(limit = MAX_MESSAGES) {
@@ -236,9 +238,11 @@ async function getPrivateHistory(userId1, userId2) {
     senderId: msg.sender_id,
     recipientId: msg.recipient_id,
     text: msg.content,
+    imageUrl: msg.image_url || null,
     created_at: msg.created_at,
     is_read: msg.is_read || false,
     reactions: msg.reactions || {},
+    replyTo: msg.reply_to || null,
   }));
 }
 
@@ -394,7 +398,8 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl } = msg.data;
+          // [2.16.0] принимаем replyTo
+          const { text, imageUrl, replyTo } = msg.data;
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             user_id: current.userId,
@@ -403,6 +408,7 @@ wss.on('connection', ws => {
             image_url: imageUrl || null,
             time: Date.now(),
             reactions: {},
+            reply_to: replyTo || null,
           };
 
           const { error } = await supabaseAdmin.from('messages').insert([row]);
@@ -521,12 +527,11 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl } = msg.data;
+          // [2.16.0] принимаем replyTo
+          const { recipientId, text, imageUrl, replyTo } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
 
-          // [правка 2.15.1] проверяем, что получатель существует —
-          // иначе в БД останется мусорное сообщение в никуда
           const { data: recipientUser, error: recipientError } = await supabaseAdmin
             .from('users')
             .select('id')
@@ -549,6 +554,7 @@ wss.on('connection', ws => {
               image_url: imageUrl || null,
               is_read: false,
               reactions: {},
+              reply_to: replyTo || null,
             }])
             .select()
             .single();
@@ -567,6 +573,7 @@ wss.on('connection', ws => {
             created_at: savedMessage.created_at,
             is_read: false,
             reactions: savedMessage.reactions || {},
+            replyTo: savedMessage.reply_to || null,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
