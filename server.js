@@ -9,8 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.16.0] в auth_ok приходит adminUserId + adminNickname
-const VERSION = '2.16.1';
+// [2.17.0] dialogs_list + dialog_update
+const VERSION = '2.17.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -241,11 +241,61 @@ async function getPrivateHistory(userId1, userId2) {
     created_at: msg.created_at,
     is_read: msg.is_read || false,
     reactions: msg.reactions || {},
-    replyTo: msg.reply_to || null,
   }));
 }
 
-// [2.16.0] кеш админа для быстрого ответа в auth_ok
+// [2.17.0] список диалогов — собеседник + последнее сообщение + unread
+async function getDialogs(userId) {
+  const { data: rows, error } = await supabaseAdmin
+    .from('private_messages')
+    .select('sender_id, recipient_id, content, image_url, created_at, is_read')
+    .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    log('error', 'Ошибка загрузки диалогов:', error.message);
+    return [];
+  }
+
+  const map = {};
+  (rows || []).forEach(row => {
+    const otherId = row.sender_id === userId ? row.recipient_id : row.sender_id;
+    if (!map[otherId]) {
+      map[otherId] = {
+        userId: otherId,
+        lastText: row.content || (row.image_url ? '📷 фото' : ''),
+        lastAt: row.created_at,
+        unread: 0,
+      };
+    }
+    if (row.recipient_id === userId && row.is_read === false) {
+      map[otherId].unread += 1;
+    }
+  });
+
+  const otherIds = Object.keys(map);
+  if (otherIds.length === 0) return [];
+
+  const { data: users, error: usersErr } = await supabaseAdmin
+    .from('users')
+    .select('id, nickname')
+    .in('id', otherIds);
+
+  if (usersErr) {
+    log('error', 'Ошибка загрузки ников диалогов:', usersErr.message);
+    return [];
+  }
+
+  const nickMap = {};
+  (users || []).forEach(u => { nickMap[u.id] = u.nickname; });
+
+  // если собеседник не найден — выкидываем диалог
+  return Object.values(map)
+    .filter(d => nickMap[d.userId])
+    .map(d => ({ ...d, nickname: nickMap[d.userId] }))
+    .sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+}
+
 let cachedAdmin = null;
 async function getAdmin() {
   if (cachedAdmin) return cachedAdmin;
@@ -346,7 +396,6 @@ wss.on('connection', ws => {
 
         clearTimeout(authTimeout);
 
-        // [2.16.0] достаём админа (из кеша или из БД)
         const admin = await getAdmin();
 
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
@@ -365,6 +414,10 @@ wss.on('connection', ws => {
         const history = await loadHistory();
         ws.send(JSON.stringify({ type: 'history', data: history }));
 
+        // [2.17.0] шлём список диалогов
+        const dialogs = await getDialogs(current.userId);
+        ws.send(JSON.stringify({ type: 'dialogs_list', data: dialogs }));
+
         broadcast({ type: 'players', data: getOnlinePlayers() });
 
         const { data: pendingRequests } = await supabase
@@ -380,19 +433,6 @@ wss.on('connection', ws => {
               senderId: r.sender_id,
               senderNickname: r.sender?.nickname || 'Unknown'
             }))
-          }));
-        }
-
-        const { data: unreadMessages } = await supabase
-          .from('private_messages')
-          .select('sender_id')
-          .eq('recipient_id', current.userId)
-          .eq('is_read', false);
-        if (unreadMessages && unreadMessages.length > 0) {
-          const senders = [...new Set(unreadMessages.map(m => m.sender_id))];
-          ws.send(JSON.stringify({
-            type: 'unread_private_list',
-            data: senders
           }));
         }
 
@@ -545,13 +585,13 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl, replyTo } = msg.data;
+          const { recipientId, text, imageUrl } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
 
           const { data: recipientUser, error: recipientError } = await supabaseAdmin
             .from('users')
-            .select('id')
+            .select('id, nickname')
             .eq('id', recipientId)
             .single();
 
@@ -589,13 +629,37 @@ wss.on('connection', ws => {
             created_at: savedMessage.created_at,
             is_read: false,
             reactions: savedMessage.reactions || {},
-            replyTo: savedMessage.reply_to || null,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
 
           if (recipientWs) {
             sendTo(recipientWs, { type: 'private_message', data: messageForClient });
+          }
+
+          // [2.17.0] обновляем диалоги у отправителя и получателя
+          const lastPreview = savedMessage.content || (savedMessage.image_url ? '📷 фото' : '');
+          sendTo(ws, {
+            type: 'dialog_update',
+            data: {
+              userId: recipientId,
+              nickname: recipientUser.nickname,
+              lastText: lastPreview,
+              lastAt: savedMessage.created_at,
+              unread: 0,
+            },
+          });
+          if (recipientWs) {
+            sendTo(recipientWs, {
+              type: 'dialog_update',
+              data: {
+                userId: current.userId,
+                nickname: current.nickname,
+                lastText: lastPreview,
+                lastAt: savedMessage.created_at,
+                unread: 'increment',
+              },
+            });
           }
           break;
         }
@@ -631,6 +695,12 @@ wss.on('connection', ws => {
               sendTo(senderWs, { type: 'message_read', data: readData });
             }
             sendTo(recipientWs, { type: 'message_read', data: readData });
+
+            // [2.17.0] обнуляем unread у читающего
+            sendTo(ws, {
+              type: 'dialog_unread_reset',
+              data: { userId: senderId },
+            });
           }
           break;
         }
