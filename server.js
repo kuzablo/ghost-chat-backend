@@ -9,8 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.17.0] dialogs_list + dialog_update
-const VERSION = '2.17.0';
+// [2.18.0] wins/losses персистентны, rate limit, лимит длины
+const VERSION = '2.18.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -163,6 +163,21 @@ let clientIdCounter = 0;
 const clients = new Map();
 const wsById = new Map();
 
+// [2.18.0] rate limit: 5 сообщений за 10 сек на пользователя
+const RATE_LIMIT_WINDOW_MS = 10 * 1000;
+const RATE_LIMIT_MAX = 5;
+const MAX_TEXT_LENGTH = 2000;
+const rateBuckets = new Map();
+
+function checkRate(userId) {
+  const now = Date.now();
+  const stamps = (rateBuckets.get(userId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (stamps.length >= RATE_LIMIT_MAX) return false;
+  stamps.push(now);
+  rateBuckets.set(userId, stamps);
+  return true;
+}
+
 const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
 };
@@ -289,7 +304,6 @@ async function getDialogs(userId) {
   const nickMap = {};
   (users || []).forEach(u => { nickMap[u.id] = u.nickname; });
 
-  // если собеседник не найден — выкидываем диалог
   return Object.values(map)
     .filter(d => nickMap[d.userId])
     .map(d => ({ ...d, nickname: nickMap[d.userId] }))
@@ -365,9 +379,10 @@ wss.on('connection', ws => {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
 
+        // [2.18.0] тянем wins/losses вместе с остальным
         const { data: dbUser } = await supabase
           .from('users')
-          .select('banned_forever, role')
+          .select('banned_forever, role, wins, losses')
           .eq('id', decoded.userId)
           .single();
 
@@ -384,6 +399,9 @@ wss.on('connection', ws => {
         current.userId = decoded.userId;
         current.nickname = decoded.nickname;
         current.role = dbUser.role;
+        // [2.18.0] счёт из БД
+        current.wins = dbUser.wins || 0;
+        current.losses = dbUser.losses || 0;
         current.lastActivity = Date.now();
 
         const duplicate = [...clients.entries()].some(([sock, c]) => {
@@ -458,11 +476,22 @@ wss.on('connection', ws => {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
           const { text, imageUrl, replyTo } = msg.data;
+
+          if (!checkRate(current.userId)) {
+            sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
+            break;
+          }
+
+          let safeText = text || '';
+          if (safeText.length > MAX_TEXT_LENGTH) {
+            safeText = safeText.slice(0, MAX_TEXT_LENGTH);
+          }
+
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             user_id: current.userId,
             nickname: current.nickname,
-            text: text || '',
+            text: safeText,
             image_url: imageUrl || null,
             time: Date.now(),
             reactions: {},
@@ -637,7 +666,6 @@ wss.on('connection', ws => {
             sendTo(recipientWs, { type: 'private_message', data: messageForClient });
           }
 
-          // [2.17.0] обновляем диалоги у отправителя и получателя
           const lastPreview = savedMessage.content || (savedMessage.image_url ? '📷 фото' : '');
           sendTo(ws, {
             type: 'dialog_update',
@@ -696,7 +724,6 @@ wss.on('connection', ws => {
             }
             sendTo(recipientWs, { type: 'message_read', data: readData });
 
-            // [2.17.0] обнуляем unread у читающего
             sendTo(ws, {
               type: 'dialog_unread_reset',
               data: { userId: senderId },
@@ -852,6 +879,9 @@ wss.on('connection', ws => {
               sendTo(wsCurrent, { type: 'duel_result', data: { result: 'win', opponentNick: opponent.nickname } });
               sendTo(wsOpponent, { type: 'duel_result', data: { result: 'lose', opponentNick: current.nickname } });
               sendTo(wsOpponent, { type: 'banned', data: { until: opponent.bannedUntil } });
+              // [2.18.0] сохраняем счёт в БД
+              await supabaseAdmin.from('users').update({ wins: current.wins }).eq('id', current.userId);
+              await supabaseAdmin.from('users').update({ losses: opponent.losses }).eq('id', opponent.userId);
             } else if (result === 'player2') {
               opponent.wins += 1;
               current.losses += 1;
@@ -859,6 +889,9 @@ wss.on('connection', ws => {
               sendTo(wsOpponent, { type: 'duel_result', data: { result: 'win', opponentNick: current.nickname } });
               sendTo(wsCurrent, { type: 'duel_result', data: { result: 'lose', opponentNick: opponent.nickname } });
               sendTo(wsCurrent, { type: 'banned', data: { until: current.bannedUntil } });
+              // [2.18.0] сохраняем счёт в БД
+              await supabaseAdmin.from('users').update({ wins: opponent.wins }).eq('id', opponent.userId);
+              await supabaseAdmin.from('users').update({ losses: current.losses }).eq('id', current.userId);
             } else {
               sendTo(wsCurrent, { type: 'duel_result', data: { result: 'draw', opponentNick: opponent.nickname } });
               sendTo(wsOpponent, { type: 'duel_result', data: { result: 'draw', opponentNick: current.nickname } });
