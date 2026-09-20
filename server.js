@@ -10,7 +10,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 
 // [2.16.0] в auth_ok приходит adminUserId + adminNickname
-const VERSION = '2.16.0';
+const VERSION = '2.16.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -571,7 +571,6 @@ wss.on('connection', ws => {
               image_url: imageUrl || null,
               is_read: false,
               reactions: {},
-              reply_to: replyTo || null,
             }])
             .select()
             .single();
