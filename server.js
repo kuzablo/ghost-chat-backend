@@ -9,7 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.16.0] reply_to для сообщений (общий чат + личка)
+// [2.16.0] в auth_ok приходит adminUserId + adminNickname
 const VERSION = '2.16.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
@@ -196,7 +196,6 @@ function determineWinner(choice1, choice2) {
   return 'player2';
 }
 
-// [2.16.0] replyTo маппится в объект
 const mapMessageRow = (row) => ({
   id: row.id,
   userId: row.user_id,
@@ -244,6 +243,21 @@ async function getPrivateHistory(userId1, userId2) {
     reactions: msg.reactions || {},
     replyTo: msg.reply_to || null,
   }));
+}
+
+// [2.16.0] кеш админа для быстрого ответа в auth_ok
+let cachedAdmin = null;
+async function getAdmin() {
+  if (cachedAdmin) return cachedAdmin;
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('id, nickname')
+    .eq('role', 'admin')
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  cachedAdmin = { userId: data.id, nickname: data.nickname };
+  return cachedAdmin;
 }
 
 function isAdmin(client) {
@@ -332,6 +346,9 @@ wss.on('connection', ws => {
 
         clearTimeout(authTimeout);
 
+        // [2.16.0] достаём админа (из кеша или из БД)
+        const admin = await getAdmin();
+
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
         ws.send(JSON.stringify({
           type: 'auth_ok',
@@ -339,7 +356,9 @@ wss.on('connection', ws => {
             nickname: current.nickname,
             userId: current.userId,
             role: current.role,
-            serverVersion: VERSION
+            serverVersion: VERSION,
+            adminUserId: admin?.userId || null,
+            adminNickname: admin?.nickname || null,
           }
         }));
 
@@ -398,7 +417,6 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          // [2.16.0] принимаем replyTo
           const { text, imageUrl, replyTo } = msg.data;
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -527,7 +545,6 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          // [2.16.0] принимаем replyTo
           const { recipientId, text, imageUrl, replyTo } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
