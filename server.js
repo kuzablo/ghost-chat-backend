@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
 const MAX_BIO_LENGTH = 200;
+const MAX_ROTATION_DEG = 15;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -532,7 +533,7 @@ async function pushToUser(recipientId, payload) {
 async function buildProfile(userId, currentUserId) {
   const { data: user, error } = await supabaseAdmin
     .from('users')
-    .select('id, nickname, role, bio, avatar_url, wins, losses')
+    .select('id, nickname, role, bio, avatar_url, wins, losses, font, text_color, text_rotation')
     .eq('id', userId)
     .single();
 
@@ -557,6 +558,9 @@ async function buildProfile(userId, currentUserId) {
     avatarUrl: user.avatar_url || null,
     wins: user.wins || 0,
     losses: user.losses || 0,
+    font: user.font || 'default',
+    textColor: user.text_color || '#111111',
+    textRotation: user.text_rotation || 0,
     isSelf: user.id === currentUserId,
     isFriend,
   };
@@ -1116,7 +1120,7 @@ wss.on('connection', ws => {
         }
 
         case 'profile_update': {
-          const { bio, avatarUrl } = msg.data || {};
+          const { bio, avatarUrl, font, textColor, textRotation } = msg.data || {};
           const update = {};
 
           if (typeof bio === 'string') {
@@ -1125,13 +1129,22 @@ wss.on('connection', ws => {
           if (typeof avatarUrl === 'string') {
             update.avatar_url = avatarUrl || null;
           }
+          if (typeof font === 'string') {
+            update.font = font.slice(0, 40);
+          }
+          if (typeof textColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(textColor)) {
+            update.text_color = textColor;
+          }
+          if (typeof textRotation === 'number' && Number.isFinite(textRotation)) {
+            update.text_rotation = Math.max(-MAX_ROTATION_DEG, Math.min(MAX_ROTATION_DEG, Math.round(textRotation)));
+          }
           if (Object.keys(update).length === 0) break;
 
           const { data: updated, error } = await supabaseAdmin
             .from('users')
             .update(update)
             .eq('id', current.userId)
-            .select('id, nickname, role, bio, avatar_url, wins, losses')
+            .select('id, nickname, role, bio, avatar_url, wins, losses, font, text_color, text_rotation')
             .single();
 
           if (error) {
@@ -1151,6 +1164,9 @@ wss.on('connection', ws => {
             avatarUrl: updated.avatar_url || null,
             wins: updated.wins || 0,
             losses: updated.losses || 0,
+            font: updated.font || 'default',
+            textColor: updated.text_color || '#111111',
+            textRotation: updated.text_rotation || 0,
             isSelf: true,
             isFriend: false,
           };
@@ -1164,6 +1180,9 @@ wss.on('connection', ws => {
               nickname: updated.nickname,
               avatarUrl: updated.avatar_url || null,
               bio: updated.bio || '',
+              font: updated.font || 'default',
+              textColor: updated.text_color || '#111111',
+              textRotation: updated.text_rotation || 0,
             },
           });
 
