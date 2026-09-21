@@ -10,6 +10,8 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.4] прогрессивный кулдаун на friend_request после отказов;
+//          rejectCount уходит клиенту для «холодной нити»
 // [2.21.3] лимит загрузки поднят 10 → 25 МБ
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 //          отдают avatarUrl и requestId — для ритуала дружбы на клиенте
@@ -19,13 +21,33 @@ const webpush = require('web-push');
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.21.3';
+const VERSION = '2.21.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
 const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
+
+// [2.21.4] ступени кулдауна по числу отказов подряд
+const FRIEND_CD_MS_1 = 5 * 60 * 1000;         // 5 мин
+const FRIEND_CD_MS_2 = 60 * 60 * 1000;        // 1 час
+const FRIEND_CD_MS_3 = 24 * 60 * 60 * 1000;   // 24 часа
+
+function calcFriendCooldownMs(count) {
+  if (count >= 3) return FRIEND_CD_MS_3;
+  if (count === 2) return FRIEND_CD_MS_2;
+  return FRIEND_CD_MS_1;
+}
+
+function formatCooldownLeft(msLeft) {
+  const mins = Math.ceil(msLeft / 60000);
+  if (mins < 60) return `${mins} мин`;
+  const hours = Math.ceil(mins / 60);
+  if (hours < 24) return `${hours} ч`;
+  const days = Math.ceil(hours / 24);
+  return `${days} дн`;
+}
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -193,7 +215,13 @@ app.post('/api/register', async (req, res) => {
 
   const { data: user, error } = await supabase
     .from('users')
-    .insert([{ nickname, password_hash, role: 'user', banned_forever: false }])
+    .insert([{
+      nickname,
+      password_hash,
+      role: 'user',
+      banned_forever: false,
+      friend_request_cooldowns: {},
+    }])
     .select()
     .single();
 
@@ -709,7 +737,6 @@ wss.on('connection', ws => {
           }
         }));
 
-        // [2.21.1] список забаненных — для метки на аватарках
         const bannedUserIds = await getBannedUserIds();
         ws.send(JSON.stringify({
           type: 'banned_users_update',
@@ -1361,7 +1388,6 @@ wss.on('connection', ws => {
 
           broadcast({ type: 'players', data: getOnlinePlayers() });
 
-          // [2.21.1] обновлённый список забаненных — всем
           const bannedUserIds = await getBannedUserIds();
           broadcast({
             type: 'banned_users_update',
@@ -1387,6 +1413,46 @@ wss.on('connection', ws => {
             .eq('id', receiverId)
             .single();
           if (userError || !receiver) break;
+
+          // [2.21.4] кулдаун и счётчик отказов
+          const { data: senderRow } = await supabaseAdmin
+            .from('users')
+            .select('friend_request_cooldowns')
+            .eq('id', current.userId)
+            .single();
+
+          const cooldowns = (senderRow?.friend_request_cooldowns && typeof senderRow.friend_request_cooldowns === 'object')
+            ? { ...senderRow.friend_request_cooldowns }
+            : {};
+
+          // [2.21.4] если Б сам слал мне запрос когда-либо — сбрасываем кулдаун
+          const { data: incoming } = await supabase
+            .from('friend_requests')
+            .select('id')
+            .eq('sender_id', receiverId)
+            .eq('receiver_id', current.userId)
+            .limit(1)
+            .maybeSingle();
+
+          if (incoming && cooldowns[receiverId]) {
+            delete cooldowns[receiverId];
+            await supabaseAdmin
+              .from('users')
+              .update({ friend_request_cooldowns: cooldowns })
+              .eq('id', current.userId);
+          }
+
+          const cd = cooldowns[receiverId];
+          const now = Date.now();
+
+          if (cd && cd.until && cd.until > now) {
+            const left = formatCooldownLeft(cd.until - now);
+            sendTo(ws, {
+              type: 'admin_error',
+              data: { message: `Подожди ${left} — недавно отклонили запрос` }
+            });
+            break;
+          }
 
           const { data: existing } = await supabase
             .from('friend_requests')
@@ -1415,7 +1481,8 @@ wss.on('connection', ws => {
             break;
           }
 
-          // [2.21.2] avatarUrl и requestId — для ритуала дружбы на клиенте
+          const rejectCount = cd?.count || 0;
+
           sendTo(ws, {
             type: 'friend_request_sent',
             data: {
@@ -1423,6 +1490,7 @@ wss.on('connection', ws => {
               receiverId,
               receiverNickname: receiver.nickname,
               receiverAvatar: receiver.avatar_url || null,
+              rejectCount,
             }
           });
 
@@ -1481,6 +1549,22 @@ wss.on('connection', ws => {
             .from('friend_requests')
             .update({ status: 'accepted' })
             .eq('id', requestId);
+
+          // [2.21.4] сброс кулдауна у отправителя при принятии
+          const { data: senderRow } = await supabaseAdmin
+            .from('users')
+            .select('friend_request_cooldowns')
+            .eq('id', request.sender_id)
+            .single();
+
+          if (senderRow?.friend_request_cooldowns && senderRow.friend_request_cooldowns[current.userId]) {
+            const next = { ...senderRow.friend_request_cooldowns };
+            delete next[current.userId];
+            await supabaseAdmin
+              .from('users')
+              .update({ friend_request_cooldowns: next })
+              .eq('id', request.sender_id);
+          }
 
           const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
           const notifyData = {
@@ -1544,7 +1628,31 @@ wss.on('connection', ws => {
             .update({ status: 'declined' })
             .eq('id', requestId);
 
-          // [2.21.2] nickname + avatar для ритуала
+          // [2.21.4] инкремент кулдауна у отправителя
+          const { data: senderRow } = await supabaseAdmin
+            .from('users')
+            .select('friend_request_cooldowns')
+            .eq('id', request.sender_id)
+            .single();
+
+          const cooldowns = (senderRow?.friend_request_cooldowns && typeof senderRow.friend_request_cooldowns === 'object')
+            ? { ...senderRow.friend_request_cooldowns }
+            : {};
+
+          const prev = cooldowns[current.userId] || { count: 0 };
+          const nextCount = (prev.count || 0) + 1;
+          const cooldownMs = calcFriendCooldownMs(nextCount);
+
+          cooldowns[current.userId] = {
+            count: nextCount,
+            until: Date.now() + cooldownMs,
+          };
+
+          await supabaseAdmin
+            .from('users')
+            .update({ friend_request_cooldowns: cooldowns })
+            .eq('id', request.sender_id);
+
           const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
           if (senderWs) {
             sendTo(senderWs, {
