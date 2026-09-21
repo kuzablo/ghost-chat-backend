@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.3] лимит загрузки поднят 10 → 25 МБ
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 //          отдают avatarUrl и requestId — для ритуала дружбы на клиенте
 // [2.21.1] список забаненных навсегда уходит клиенту — фронт рисует метку
@@ -18,12 +19,13 @@ const webpush = require('web-push');
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.21.2';
+const VERSION = '2.21.3';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
 const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
+const MAX_UPLOAD_MB = 25;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -49,7 +51,7 @@ if (pushEnabled) {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
 });
 
 const uploadAvatar = multer({
