@@ -10,12 +10,13 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.20.1] players и friends отдают avatarUrl; аватар обновляется в client при изменении
+// [2.21.1] список забаненных навсегда уходит клиенту — фронт рисует метку
+// [2.21.0] players и friends отдают avatarUrl; аватар обновляется в client при изменении
 // [2.20.0] профили: bio, аватар, удаление друга
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.21.0';
+const VERSION = '2.21.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -326,6 +327,19 @@ function broadcast(payload, exceptWs = null) {
   wss.clients.forEach(ws => {
     if (ws !== exceptWs) sendTo(ws, payload);
   });
+}
+
+// [2.21.1] достаём список id забаненных навсегда
+async function getBannedUserIds() {
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .eq('banned_forever', true);
+  if (error) {
+    log('error', 'Ошибка загрузки забаненных:', error.message);
+    return [];
+  }
+  return (data || []).map(u => u.id);
 }
 
 function getOnlinePlayers() {
@@ -689,6 +703,13 @@ wss.on('connection', ws => {
             adminUserId: admin?.userId || null,
             adminNickname: admin?.nickname || null,
           }
+        }));
+
+        // [2.21.1] список забаненных — для метки на аватарках
+        const bannedUserIds = await getBannedUserIds();
+        ws.send(JSON.stringify({
+          type: 'banned_users_update',
+          data: { bannedUserIds },
         }));
 
         const history = await loadHistory();
@@ -1335,6 +1356,13 @@ wss.on('connection', ws => {
           }
 
           broadcast({ type: 'players', data: getOnlinePlayers() });
+
+          // [2.21.1] обновлённый список забаненных — всем
+          const bannedUserIds = await getBannedUserIds();
+          broadcast({
+            type: 'banned_users_update',
+            data: { bannedUserIds },
+          });
           break;
         }
 
