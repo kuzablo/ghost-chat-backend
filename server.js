@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.8] pendingRequests: фильтр по друзьям; accept/decline удаляют запись
 // [2.21.7] fix: pendingRequests — senderNickname через отдельный запрос
 // [2.21.6] avatars_map при auth; лимит аватарки 25 МБ
 // [2.21.5] блокировки: blocks, фильтр players, block_user/unblock_user
@@ -18,7 +19,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.21.7';
+const VERSION = '2.21.8';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -834,7 +835,7 @@ wss.on('connection', ws => {
 
         await broadcastPlayers();
 
-        // [2.21.7] правильный select: сначала id sender_id, потом ники
+        // [2.21.8] pendingRequests с фильтром: исключаем тех, с кем уже дружим
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
           .select('id, sender_id')
@@ -843,22 +844,54 @@ wss.on('connection', ws => {
 
         if (pendingRequests && pendingRequests.length > 0) {
           const senderIds = pendingRequests.map(r => r.sender_id);
-          const { data: senders } = await supabaseAdmin
-            .from('users')
-            .select('id, nickname')
-            .in('id', senderIds);
 
-          const nickMap = {};
-          (senders || []).forEach(u => { nickMap[u.id] = u.nickname; });
+          // Кто из отправителей уже у меня в друзьях?
+          const { data: myFriends } = await supabaseAdmin
+            .from('friends')
+            .select('friend_id')
+            .eq('user_id', current.userId)
+            .in('friend_id', senderIds);
 
-          ws.send(JSON.stringify({
-            type: 'friend_requests_list',
-            data: pendingRequests.map(r => ({
-              requestId: r.id,
-              senderId: r.sender_id,
-              senderNickname: nickMap[r.sender_id] || 'Unknown',
-            }))
-          }));
+          const friendSet = new Set((myFriends || []).map(f => f.friend_id));
+
+          // Отбрасываем запросы от существующих друзей + чистим их из БД
+          const staleIds = pendingRequests
+            .filter(r => friendSet.has(r.sender_id))
+            .map(r => r.id);
+
+          if (staleIds.length > 0) {
+            await supabase
+              .from('friend_requests')
+              .delete()
+              .in('id', staleIds);
+          }
+
+          const fresh = pendingRequests.filter(r => !friendSet.has(r.sender_id));
+
+          if (fresh.length > 0) {
+            const freshSenderIds = fresh.map(r => r.sender_id);
+            const { data: senders } = await supabaseAdmin
+              .from('users')
+              .select('id, nickname')
+              .in('id', freshSenderIds);
+
+            const nickMap = {};
+            (senders || []).forEach(u => { nickMap[u.id] = u.nickname; });
+
+            ws.send(JSON.stringify({
+              type: 'friend_requests_list',
+              data: fresh.map(r => ({
+                requestId: r.id,
+                senderId: r.sender_id,
+                senderNickname: nickMap[r.sender_id] || 'Unknown',
+              }))
+            }));
+          } else {
+            ws.send(JSON.stringify({
+              type: 'friend_requests_list',
+              data: [],
+            }));
+          }
         }
 
         log('info', `Пользователь авторизован: ${current.nickname} (${current.role})`);
@@ -1729,9 +1762,10 @@ wss.on('connection', ws => {
             break;
           }
 
+          // [2.21.8] удаляем запись, а не помечаем статусом
           await supabase
             .from('friend_requests')
-            .update({ status: 'accepted' })
+            .delete()
             .eq('id', requestId);
 
           const { data: senderRow } = await supabaseAdmin
@@ -1806,9 +1840,10 @@ wss.on('connection', ws => {
 
           if (findError || !request) break;
 
+          // [2.21.8] удаляем запись
           await supabase
             .from('friend_requests')
-            .update({ status: 'declined' })
+            .delete()
             .eq('id', requestId);
 
           const { data: senderRow } = await supabaseAdmin
