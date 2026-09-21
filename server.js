@@ -9,8 +9,8 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
 
-// [2.18.0] wins/losses персистентны, rate limit, лимит длины
-const VERSION = '2.18.0';
+// [2.18.1] замена старого соединения вместо отказа 4002
+const VERSION = '2.18.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -259,7 +259,6 @@ async function getPrivateHistory(userId1, userId2) {
   }));
 }
 
-// [2.17.0] список диалогов — собеседник + последнее сообщение + unread
 async function getDialogs(userId) {
   const { data: rows, error } = await supabaseAdmin
     .from('private_messages')
@@ -379,7 +378,6 @@ wss.on('connection', ws => {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
 
-        // [2.18.0] тянем wins/losses вместе с остальным
         const { data: dbUser } = await supabase
           .from('users')
           .select('banned_forever, role, wins, losses')
@@ -399,17 +397,20 @@ wss.on('connection', ws => {
         current.userId = decoded.userId;
         current.nickname = decoded.nickname;
         current.role = dbUser.role;
-        // [2.18.0] счёт из БД
         current.wins = dbUser.wins || 0;
         current.losses = dbUser.losses || 0;
         current.lastActivity = Date.now();
 
-        const duplicate = [...clients.entries()].some(([sock, c]) => {
+        // [2.18.1] заменяем старое соединение того же юзера вместо отказа.
+        // Раньше при PWA + Safari клиент попадал в цикл close(4002) → reconnect.
+        const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
           return sock !== ws && c.userId === current.userId;
         });
-        if (duplicate) {
-          ws.close(4002, 'Already connected from another device');
-          return;
+        for (const [oldSock, oldClient] of duplicateEntries) {
+          log('info', `Замена старого соединения ${oldClient.id} на ${current.id}`);
+          try { oldSock.close(4000, 'Replaced by new connection'); } catch { /* noop */ }
+          clients.delete(oldSock);
+          wsById.delete(oldClient.id);
         }
 
         clearTimeout(authTimeout);
@@ -432,7 +433,6 @@ wss.on('connection', ws => {
         const history = await loadHistory();
         ws.send(JSON.stringify({ type: 'history', data: history }));
 
-        // [2.17.0] шлём список диалогов
         const dialogs = await getDialogs(current.userId);
         ws.send(JSON.stringify({ type: 'dialogs_list', data: dialogs }));
 
@@ -890,7 +890,6 @@ wss.on('connection', ws => {
               sendTo(wsCurrent, { type: 'duel_result', data: { result: 'win', opponentNick: opponent.nickname } });
               sendTo(wsOpponent, { type: 'duel_result', data: { result: 'lose', opponentNick: current.nickname } });
               sendTo(wsOpponent, { type: 'banned', data: { until: opponent.bannedUntil } });
-              // [2.18.0] сохраняем счёт в БД
               await supabaseAdmin.from('users').update({ wins: current.wins }).eq('id', current.userId);
               await supabaseAdmin.from('users').update({ losses: opponent.losses }).eq('id', opponent.userId);
             } else if (result === 'player2') {
@@ -900,7 +899,6 @@ wss.on('connection', ws => {
               sendTo(wsOpponent, { type: 'duel_result', data: { result: 'win', opponentNick: current.nickname } });
               sendTo(wsCurrent, { type: 'duel_result', data: { result: 'lose', opponentNick: opponent.nickname } });
               sendTo(wsCurrent, { type: 'banned', data: { until: current.bannedUntil } });
-              // [2.18.0] сохраняем счёт в БД
               await supabaseAdmin.from('users').update({ wins: opponent.wins }).eq('id', opponent.userId);
               await supabaseAdmin.from('users').update({ losses: current.losses }).eq('id', current.userId);
             } else {
