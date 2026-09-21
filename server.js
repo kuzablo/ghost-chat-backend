@@ -507,6 +507,12 @@ wss.on('connection', ws => {
           break;
         }
 
+        case 'client_log': {
+          const text = msg.data?.text || '';
+          log('info', `[CLIENT] ${text}`);
+          break;
+        }
+
         case 'ping': {
           sendTo(ws, { type: 'pong', data: msg.data });
           break;
@@ -1151,13 +1157,14 @@ wss.on('connection', ws => {
     log('error', `WebSocket error (client ${client.id}):`, err.message);
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code, reasonBuf) => {
     clearTimeout(authTimeout);
     if (client.pendingInviteTimeout) clearTimeout(client.pendingInviteTimeout);
     clients.delete(ws);
     wsById.delete(client.id);
     broadcast({ type: 'players', data: getOnlinePlayers() });
-    log('info', `Соединение закрыто: ${client.id}`);
+    const reason = reasonBuf?.toString() || '';
+    log('info', `Соединение закрыто: ${client.id} (код ${code}${reason ? ', ' + reason : ''})`);
   });
 });
 
