@@ -10,9 +10,10 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.19.0] Web Push: бейдж на иконке PWA, уведомления в закрытом приложении
+// [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
+// [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.19.0';
+const VERSION = '2.19.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -28,7 +29,6 @@ const supabaseAdmin = serviceRoleKey
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// ===== [2.19.0] VAPID для Web Push =====
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@banjoboy420.ru';
@@ -167,7 +167,7 @@ app.post('/api/login', async (req, res) => {
   res.json({ token, nickname: user.nickname, role: user.role });
 });
 
-// ===== [2.19.0] PUSH ПОДПИСКИ =====
+// ===== PUSH ПОДПИСКИ =====
 app.post('/api/push/subscribe', async (req, res) => {
   const { token, subscription } = req.body || {};
   if (!token || !subscription?.endpoint || !subscription?.keys) {
@@ -231,7 +231,6 @@ let clientIdCounter = 0;
 const clients = new Map();
 const wsById = new Map();
 
-// [2.18.0] rate limit: 5 сообщений за 10 сек на пользователя
 const RATE_LIMIT_WINDOW_MS = 10 * 1000;
 const RATE_LIMIT_MAX = 5;
 const MAX_TEXT_LENGTH = 2000;
@@ -395,7 +394,6 @@ function isAdmin(client) {
   return client?.role === 'admin';
 }
 
-// ===== [2.19.0] Web Push =====
 async function sendPushToUser(userId, payload) {
   if (!pushEnabled) return;
 
@@ -413,7 +411,6 @@ async function sendPushToUser(userId, payload) {
         JSON.stringify(payload)
       );
     } catch (err) {
-      // 404/410 = подписка мертва (браузер удалил), чистим
       if (err.statusCode === 404 || err.statusCode === 410) {
         await supabaseAdmin
           .from('push_subscriptions')
@@ -449,7 +446,6 @@ async function pushBroadcast(senderUserId, payload) {
 async function pushToUser(recipientId, payload) {
   if (!pushEnabled) return;
 
-  // если получатель онлайн — WebSocket уже доставил, push не нужен
   const isOnline = [...clients.values()].some(c => c.userId === recipientId);
   if (isOnline) return;
 
@@ -530,7 +526,6 @@ wss.on('connection', ws => {
         current.losses = dbUser.losses || 0;
         current.lastActivity = Date.now();
 
-        // [2.18.1] заменяем старое соединение того же юзера вместо отказа.
         const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
           return sock !== ws && c.userId === current.userId;
         });
@@ -633,7 +628,6 @@ wss.on('connection', ws => {
           }
           broadcast({ type: 'message', data: mapMessageRow(row) });
 
-          // [2.19.0] push тем, кто не онлайн
           pushBroadcast(current.userId, {
             title: current.nickname,
             body: safeText ? safeText.slice(0, 120) : '📷 фото',
@@ -700,13 +694,15 @@ wss.on('connection', ws => {
           break;
         }
 
+        // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
         case 'edit_message': {
           const { messageId, text } = msg.data;
-          if (!messageId || !text) break;
+          if (!messageId) break;
+          if (typeof text !== 'string') break;
 
           const { data: existing, error: fetchError } = await supabaseAdmin
             .from('messages')
-            .select('user_id')
+            .select('user_id, image_url')
             .eq('id', messageId)
             .single();
           if (fetchError || !existing) break;
@@ -716,9 +712,12 @@ wss.on('connection', ws => {
             break;
           }
 
+          const safeText = text.trim();
+          if (!safeText && !existing.image_url) break;
+
           const { data: updated, error: updateError } = await supabaseAdmin
             .from('messages')
-            .update({ text })
+            .update({ text: safeText })
             .eq('id', messageId)
             .select()
             .single();
@@ -838,7 +837,6 @@ wss.on('connection', ws => {
             });
           }
 
-          // [2.19.0] push получателю, если он не онлайн
           pushToUser(recipientId, {
             title: `✉️ ${current.nickname}`,
             body: lastPreview || 'Новое сообщение',
