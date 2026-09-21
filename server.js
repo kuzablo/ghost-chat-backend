@@ -15,7 +15,7 @@ const webpush = require('web-push');
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.20.1';
+const VERSION = '2.21.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
