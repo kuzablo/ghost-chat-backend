@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.9] getDialogs отдаёт avatarUrl
 // [2.21.8] pendingRequests: фильтр по друзьям; accept/decline удаляют запись
 // [2.21.7] fix: pendingRequests — senderNickname через отдельный запрос
 // [2.21.6] avatars_map при auth; лимит аватарки 25 МБ
@@ -19,7 +20,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.21.8';
+const VERSION = '2.21.9';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -556,7 +557,7 @@ async function getDialogs(userId) {
 
   const { data: users, error: usersErr } = await supabaseAdmin
     .from('users')
-    .select('id, nickname')
+    .select('id, nickname, avatar_url')
     .in('id', otherIds);
 
   if (usersErr) {
@@ -564,12 +565,18 @@ async function getDialogs(userId) {
     return [];
   }
 
-  const nickMap = {};
-  (users || []).forEach(u => { nickMap[u.id] = u.nickname; });
+  const userMap = {};
+  (users || []).forEach(u => {
+    userMap[u.id] = { nickname: u.nickname, avatarUrl: u.avatar_url || null };
+  });
 
   return Object.values(map)
-    .filter(d => nickMap[d.userId])
-    .map(d => ({ ...d, nickname: nickMap[d.userId] }))
+    .filter(d => userMap[d.userId])
+    .map(d => ({
+      ...d,
+      nickname: userMap[d.userId].nickname,
+      avatarUrl: userMap[d.userId].avatarUrl,
+    }))
     .sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
 }
 
