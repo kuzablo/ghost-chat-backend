@@ -10,9 +10,10 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.10] dialogs_bg: отдаём при auth, принимаем dialogs_bg_update
 // [2.21.9] getDialogs отдаёт avatarUrl
-// [2.21.8] pendingRequests: фильтр по друзьям; accept/decline удаляют запись
-// [2.21.7] fix: pendingRequests — senderNickname через отдельный запрос
+// [2.21.8] чистка pending friend_requests
+// [2.21.7] fix pendingRequests senderNickname
 // [2.21.6] avatars_map при auth; лимит аватарки 25 МБ
 // [2.21.5] блокировки: blocks, фильтр players, block_user/unblock_user
 // [2.21.4] прогрессивный кулдаун на friend_request
@@ -20,7 +21,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.21.9';
+const VERSION = '2.21.10';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -28,6 +29,8 @@ const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
+const MAX_DIALOGS_BG_MB = 15;
+const MAX_DIALOGS_BG_LENGTH = 500;
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -183,6 +186,71 @@ app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => 
   } catch (err) {
     console.error('Ошибка загрузки аватара:', err);
     res.status(500).json({ error: err.message || 'Avatar upload failed' });
+  }
+});
+
+// ===== ЗАГРУЗКА ФОНА ДИАЛОГОВ =====
+const uploadDialogsBg = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DIALOGS_BG_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only images allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(401).json({ error: 'Token required' });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  const file = req.file;
+  const fileExt = (file.originalname.split('.').pop() || 'jpg').toLowerCase();
+  const fileName = `${decoded.userId}_${Date.now()}.${fileExt}`;
+  const filePath = `dialogs-bg/${fileName}`;
+
+  try {
+    const { error } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (error) {
+      console.error('❌ Dialogs bg upload error:', error);
+      throw error;
+    }
+
+    const { data: urlData } = await supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+    const publicURL = urlData?.publicUrl;
+
+    if (!publicURL) {
+      throw new Error('Public URL not generated');
+    }
+
+    console.log(`[DIALOGS-BG] uploaded for ${decoded.nickname}`);
+    res.json({ bgUrl: publicURL });
+  } catch (err) {
+    console.error('Ошибка загрузки фона диалогов:', err);
+    res.status(500).json({ error: err.message || 'Dialogs bg upload failed' });
   }
 });
 
@@ -732,6 +800,7 @@ wss.on('connection', ws => {
     wins: 0,
     losses: 0,
     avatarUrl: null,
+    dialogsBg: null,
     bannedUntil: null,
     duel: null,
     isTyping: false,
@@ -767,7 +836,7 @@ wss.on('connection', ws => {
 
         const { data: dbUser } = await supabase
           .from('users')
-          .select('banned_forever, role, wins, losses, avatar_url')
+          .select('banned_forever, role, wins, losses, avatar_url, dialogs_bg')
           .eq('id', decoded.userId)
           .single();
 
@@ -787,6 +856,7 @@ wss.on('connection', ws => {
         current.wins = dbUser.wins || 0;
         current.losses = dbUser.losses || 0;
         current.avatarUrl = dbUser.avatar_url || null;
+        current.dialogsBg = dbUser.dialogs_bg || null;
         current.lastActivity = Date.now();
 
         const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
@@ -813,6 +883,7 @@ wss.on('connection', ws => {
             serverVersion: VERSION,
             adminUserId: admin?.userId || null,
             adminNickname: admin?.nickname || null,
+            dialogsBg: current.dialogsBg,
           }
         }));
 
@@ -842,7 +913,6 @@ wss.on('connection', ws => {
 
         await broadcastPlayers();
 
-        // [2.21.8] pendingRequests с фильтром: исключаем тех, с кем уже дружим
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
           .select('id, sender_id')
@@ -852,7 +922,6 @@ wss.on('connection', ws => {
         if (pendingRequests && pendingRequests.length > 0) {
           const senderIds = pendingRequests.map(r => r.sender_id);
 
-          // Кто из отправителей уже у меня в друзьях?
           const { data: myFriends } = await supabaseAdmin
             .from('friends')
             .select('friend_id')
@@ -861,7 +930,6 @@ wss.on('connection', ws => {
 
           const friendSet = new Set((myFriends || []).map(f => f.friend_id));
 
-          // Отбрасываем запросы от существующих друзей + чистим их из БД
           const staleIds = pendingRequests
             .filter(r => friendSet.has(r.sender_id))
             .map(r => r.id);
@@ -916,7 +984,8 @@ wss.on('connection', ws => {
         msg.type !== 'private_history' &&
         msg.type !== 'profile_get' &&
         msg.type !== 'block_user' &&
-        msg.type !== 'unblock_user') {
+        msg.type !== 'unblock_user' &&
+        msg.type !== 'dialogs_bg_update') {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
@@ -1082,6 +1151,42 @@ wss.on('connection', ws => {
             break;
           }
           broadcast({ type: 'message_deleted', data: { messageId } });
+          break;
+        }
+
+        // ===== ФОН ДИАЛОГОВ =====
+        case 'dialogs_bg_update': {
+          const { bg } = msg.data || {};
+
+          let nextBg = null;
+          if (typeof bg === 'string') {
+            const trimmed = bg.trim();
+            if (trimmed.length > 0 && trimmed.length <= MAX_DIALOGS_BG_LENGTH) {
+              if (trimmed.startsWith('preset:') || trimmed.startsWith('url:')) {
+                nextBg = trimmed;
+              }
+            }
+          }
+
+          const { error } = await supabaseAdmin
+            .from('users')
+            .update({ dialogs_bg: nextBg })
+            .eq('id', current.userId);
+
+          if (error) {
+            log('error', 'Ошибка сохранения фона диалогов:', error.message);
+            sendTo(ws, {
+              type: 'dialogs_bg_error',
+              data: { message: 'Не удалось сохранить фон' }
+            });
+            break;
+          }
+
+          current.dialogsBg = nextBg;
+          sendTo(ws, {
+            type: 'dialogs_bg_updated',
+            data: { bg: nextBg },
+          });
           break;
         }
 
@@ -1769,7 +1874,6 @@ wss.on('connection', ws => {
             break;
           }
 
-          // [2.21.8] удаляем запись, а не помечаем статусом
           await supabase
             .from('friend_requests')
             .delete()
@@ -1847,7 +1951,6 @@ wss.on('connection', ws => {
 
           if (findError || !request) break;
 
-          // [2.21.8] удаляем запись
           await supabase
             .from('friend_requests')
             .delete()
