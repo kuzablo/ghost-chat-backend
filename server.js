@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.22.0] Instagram oEmbed: endpoint /api/instagram-embed + кэш в памяти
 // [2.21.10] dialogs_bg: отдаём при auth, принимаем dialogs_bg_update
 // [2.21.9] getDialogs отдаёт avatarUrl
 // [2.21.8] чистка pending friend_requests
@@ -21,7 +22,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.21.10';
+const VERSION = '2.22.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -31,6 +32,9 @@ const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
+
+const IG_CACHE_TTL_MS = 60 * 60 * 1000;
+const IG_FETCH_TIMEOUT_MS = 6000;
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -89,9 +93,24 @@ const uploadAvatar = multer({
   },
 });
 
+const uploadDialogsBg = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DIALOGS_BG_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only images allowed'));
+    }
+    cb(null, true);
+  },
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const log = (level, ...args) => {
+  console[level](`[CHAT v${VERSION}]`, ...args);
+};
 
 // ===== ЗАГРУЗКА ФАЙЛОВ =====
 app.post('/api/upload', upload.single('file'), async (req, res) => {
@@ -190,17 +209,6 @@ app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => 
 });
 
 // ===== ЗАГРУЗКА ФОНА ДИАЛОГОВ =====
-const uploadDialogsBg = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_DIALOGS_BG_MB * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only images allowed'));
-    }
-    cb(null, true);
-  },
-});
-
 app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -252,6 +260,82 @@ app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, r
     console.error('Ошибка загрузки фона диалогов:', err);
     res.status(500).json({ error: err.message || 'Dialogs bg upload failed' });
   }
+});
+
+// ===== INSTAGRAM OEMBED =====
+const igCache = new Map();
+
+function isValidInstagramUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host !== 'instagram.com' && host !== 'instagr.am') return false;
+    return /^\/(?:p|reel|reels|tv)\/[A-Za-z0-9_-]+\/?$/.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/instagram-embed', async (req, res) => {
+  const url = String(req.query.url || '').trim();
+
+  if (!isValidInstagramUrl(url)) {
+    return res.status(400).json({ error: 'Invalid Instagram URL' });
+  }
+
+  const cached = igCache.get(url);
+  if (cached && cached.expires > Date.now()) {
+    return res.json(cached.data);
+  }
+
+  const endpoints = [
+    `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(url)}`,
+    `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
+
+      const resp = await fetch(endpoint, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; BanjoboyChat/1.0; +https://banjoboy420.ru)',
+          'Accept': 'application/json',
+        },
+        signal: ctrl.signal,
+      });
+
+      clearTimeout(t);
+
+      if (!resp.ok) continue;
+
+      const data = await resp.json();
+      if (!data || !data.thumbnail_url) continue;
+
+      const isVideo =
+        /\/(reel|reels|tv)\//.test(url) ||
+        data.type === 'video' ||
+        data.media_type === 'video';
+
+      const payload = {
+        thumbnailUrl: data.thumbnail_url,
+        title: data.title || null,
+        authorName: data.author_name || null,
+        isVideo,
+        url,
+      };
+
+      igCache.set(url, { data: payload, expires: Date.now() + IG_CACHE_TTL_MS });
+      log('info', `[IG] oEmbed ok for ${url}`);
+      return res.json(payload);
+    } catch (err) {
+      log('warn', `Instagram oEmbed failed (${endpoint}):`, err.message);
+    }
+  }
+
+  return res.status(502).json({ error: 'Instagram oEmbed unavailable' });
 });
 
 // ===== РЕГИСТРАЦИЯ =====
@@ -413,10 +497,6 @@ function checkRate(userId) {
   rateBuckets.set(userId, stamps);
   return true;
 }
-
-const log = (level, ...args) => {
-  console[level](`[CHAT v${VERSION}]`, ...args);
-};
 
 function sendTo(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
@@ -712,7 +792,7 @@ async function pushBroadcast(senderUserId, payload) {
   const targets = [...new Set(subs.map(s => s.user_id))]
     .filter(uid => !onlineUserIds.has(uid));
 
-  await Promise.all(targets.map(uid => sendPushToUser(uid, payload)));
+  await Promise.all(targets.map(uid => sendToPushToUser(uid, payload)));
 }
 
 async function pushToUser(recipientId, payload) {
