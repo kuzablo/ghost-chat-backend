@@ -8,9 +8,11 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const multer = require('multer');
+const webpush = require('web-push');
 
+// [2.19.0] Web Push: бейдж на иконке PWA, уведомления в закрытом приложении
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.18.1';
+const VERSION = '2.19.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -25,6 +27,18 @@ const supabaseAdmin = serviceRoleKey
   : supabase;
 
 const JWT_SECRET = process.env.JWT_SECRET;
+
+// ===== [2.19.0] VAPID для Web Push =====
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@banjoboy420.ru';
+const pushEnabled = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (pushEnabled) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn('[PUSH] VAPID-ключи не заданы — Web Push отключён');
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -151,6 +165,60 @@ app.post('/api/login', async (req, res) => {
     JWT_SECRET
   );
   res.json({ token, nickname: user.nickname, role: user.role });
+});
+
+// ===== [2.19.0] PUSH ПОДПИСКИ =====
+app.post('/api/push/subscribe', async (req, res) => {
+  const { token, subscription } = req.body || {};
+  if (!token || !subscription?.endpoint || !subscription?.keys) {
+    return res.status(400).json({ error: 'token and subscription required' });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  const { endpoint, keys } = subscription;
+
+  const { error } = await supabaseAdmin
+    .from('push_subscriptions')
+    .upsert(
+      [{ user_id: decoded.userId, endpoint, keys }],
+      { onConflict: 'endpoint' }
+    );
+
+  if (error) {
+    console.error('Push subscribe error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+
+  console.log(`[PUSH] subscribed: ${decoded.nickname} (${endpoint.slice(0, 40)}…)`);
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', async (req, res) => {
+  const { token, endpoint } = req.body || {};
+  if (!token || !endpoint) {
+    return res.status(400).json({ error: 'token and endpoint required' });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  await supabaseAdmin
+    .from('push_subscriptions')
+    .delete()
+    .eq('user_id', decoded.userId)
+    .eq('endpoint', endpoint);
+
+  res.json({ ok: true });
 });
 
 const server = app.listen(PORT, () => {
@@ -327,6 +395,67 @@ function isAdmin(client) {
   return client?.role === 'admin';
 }
 
+// ===== [2.19.0] Web Push =====
+async function sendPushToUser(userId, payload) {
+  if (!pushEnabled) return;
+
+  const { data: subs, error } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('id, endpoint, keys')
+    .eq('user_id', userId);
+
+  if (error || !subs || subs.length === 0) return;
+
+  await Promise.all(subs.map(async (sub) => {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: sub.keys },
+        JSON.stringify(payload)
+      );
+    } catch (err) {
+      // 404/410 = подписка мертва (браузер удалил), чистим
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        await supabaseAdmin
+          .from('push_subscriptions')
+          .delete()
+          .eq('id', sub.id);
+      } else {
+        log('warn', 'Push send error:', err.statusCode, err.message);
+      }
+    }
+  }));
+}
+
+async function pushBroadcast(senderUserId, payload) {
+  if (!pushEnabled) return;
+
+  const { data: subs } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('user_id')
+    .neq('user_id', senderUserId);
+
+  if (!subs || subs.length === 0) return;
+
+  const onlineUserIds = new Set(
+    [...clients.values()].filter(c => c.userId).map(c => c.userId)
+  );
+
+  const targets = [...new Set(subs.map(s => s.user_id))]
+    .filter(uid => !onlineUserIds.has(uid));
+
+  await Promise.all(targets.map(uid => sendPushToUser(uid, payload)));
+}
+
+async function pushToUser(recipientId, payload) {
+  if (!pushEnabled) return;
+
+  // если получатель онлайн — WebSocket уже доставил, push не нужен
+  const isOnline = [...clients.values()].some(c => c.userId === recipientId);
+  if (isOnline) return;
+
+  await sendPushToUser(recipientId, payload);
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ws, client] of clients.entries()) {
@@ -402,7 +531,6 @@ wss.on('connection', ws => {
         current.lastActivity = Date.now();
 
         // [2.18.1] заменяем старое соединение того же юзера вместо отказа.
-        // Раньше при PWA + Safari клиент попадал в цикл close(4002) → reconnect.
         const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
           return sock !== ws && c.userId === current.userId;
         });
@@ -504,6 +632,15 @@ wss.on('connection', ws => {
             break;
           }
           broadcast({ type: 'message', data: mapMessageRow(row) });
+
+          // [2.19.0] push тем, кто не онлайн
+          pushBroadcast(current.userId, {
+            title: current.nickname,
+            body: safeText ? safeText.slice(0, 120) : '📷 фото',
+            url: '/',
+            tag: `msg-${row.id}`,
+          }).catch(err => log('warn', 'pushBroadcast error:', err.message));
+
           break;
         }
 
@@ -700,6 +837,15 @@ wss.on('connection', ws => {
               },
             });
           }
+
+          // [2.19.0] push получателю, если он не онлайн
+          pushToUser(recipientId, {
+            title: `✉️ ${current.nickname}`,
+            body: lastPreview || 'Новое сообщение',
+            url: '/',
+            tag: `pm-${savedMessage.id}`,
+          }).catch(err => log('warn', 'pushToUser error:', err.message));
+
           break;
         }
 
