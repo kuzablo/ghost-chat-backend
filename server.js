@@ -10,13 +10,15 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.20.0] профили: bio, аватар, удаление друга
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.19.1';
+const VERSION = '2.20.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
+const MAX_BIO_LENGTH = 200;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -43,6 +45,18 @@ if (pushEnabled) {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+// [2.20.0] отдельный multer для аватара — 2 МБ, только изображения
+const uploadAvatar = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only images allowed'));
+    }
+    cb(null, true);
+  },
 });
 
 const app = express();
@@ -88,6 +102,60 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   } catch (err) {
     console.error('Ошибка загрузки файла:', err);
     res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// ===== [2.20.0] ЗАГРУЗКА АВАТАРА =====
+app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(401).json({ error: 'Token required' });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  const file = req.file;
+  const fileExt = (file.originalname.split('.').pop() || 'jpg').toLowerCase();
+  const fileName = `${decoded.userId}_${Date.now()}.${fileExt}`;
+  const filePath = `avatars/${fileName}`;
+
+  try {
+    const { error } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (error) {
+      console.error('❌ Avatar upload error:', error);
+      throw error;
+    }
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+    const publicURL = urlData?.publicUrl;
+
+    if (!publicURL) {
+      throw new Error('Public URL not generated');
+    }
+
+    console.log(`[PROFILE] avatar uploaded for ${decoded.nickname}`);
+    res.json({ avatarUrl: publicURL });
+  } catch (err) {
+    console.error('Ошибка загрузки аватара:', err);
+    res.status(500).json({ error: err.message || 'Avatar upload failed' });
   }
 });
 
@@ -452,6 +520,63 @@ async function pushToUser(recipientId, payload) {
   await sendPushToUser(recipientId, payload);
 }
 
+// ===== [2.20.0] helper: собрать профиль =====
+async function buildProfile(userId, currentUserId) {
+  const { data: user, error } = await supabaseAdmin
+    .from('users')
+    .select('id, nickname, role, bio, avatar_url, wins, losses')
+    .eq('id', userId)
+    .single();
+
+  if (error || !user) return null;
+
+  // является ли друг currentUser?
+  let isFriend = false;
+  if (userId !== currentUserId) {
+    const { data: rel } = await supabaseAdmin
+      .from('friends')
+      .select('user_id')
+      .eq('user_id', currentUserId)
+      .eq('friend_id', userId)
+      .maybeSingle();
+    isFriend = !!rel;
+  }
+
+  return {
+    userId: user.id,
+    nickname: user.nickname,
+    role: user.role,
+    bio: user.bio || '',
+    avatarUrl: user.avatar_url || null,
+    wins: user.wins || 0,
+    losses: user.losses || 0,
+    isSelf: user.id === currentUserId,
+    isFriend,
+  };
+}
+
+// ===== [2.20.0] helper: список друзей для юзера =====
+async function getFriendsList(userId) {
+  const { data: friendIds } = await supabaseAdmin
+    .from('friends')
+    .select('friend_id')
+    .eq('user_id', userId);
+
+  if (!friendIds || friendIds.length === 0) return [];
+
+  const ids = friendIds.map(f => f.friend_id);
+  const { data: users } = await supabaseAdmin
+    .from('users')
+    .select('id, nickname, avatar_url')
+    .in('id', ids);
+
+  return (users || []).map(u => ({
+    userId: u.id,
+    nickname: u.nickname,
+    avatarUrl: u.avatar_url || null,
+  }));
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ws, client] of clients.entries()) {
@@ -589,7 +714,8 @@ wss.on('connection', ws => {
     if (current.bannedUntil && current.bannedUntil > Date.now() &&
         msg.type !== 'private_message' &&
         msg.type !== 'private_typing' &&
-        msg.type !== 'private_history') {
+        msg.type !== 'private_history' &&
+        msg.type !== 'profile_get') {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
@@ -694,7 +820,6 @@ wss.on('connection', ws => {
           break;
         }
 
-        // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
         case 'edit_message': {
           const { messageId, text } = msg.data;
           if (!messageId) break;
@@ -966,6 +1091,109 @@ wss.on('connection', ws => {
           break;
         }
 
+        // ===== [2.20.0] ПРОФИЛЬ =====
+        case 'profile_get': {
+          const { userId } = msg.data || {};
+          if (!userId) break;
+
+          const profile = await buildProfile(userId, current.userId);
+          if (!profile) {
+            sendTo(ws, { type: 'profile_error', data: { message: 'Профиль не найден' } });
+            break;
+          }
+
+          sendTo(ws, { type: 'profile_data', data: profile });
+          break;
+        }
+
+        case 'profile_update': {
+          const { bio, avatarUrl } = msg.data || {};
+          const update = {};
+
+          if (typeof bio === 'string') {
+            update.bio = bio.slice(0, MAX_BIO_LENGTH);
+          }
+          if (typeof avatarUrl === 'string') {
+            update.avatar_url = avatarUrl || null;
+          }
+          if (Object.keys(update).length === 0) break;
+
+          const { data: updated, error } = await supabaseAdmin
+            .from('users')
+            .update(update)
+            .eq('id', current.userId)
+            .select('id, nickname, role, bio, avatar_url, wins, losses')
+            .single();
+
+          if (error) {
+            log('error', 'Ошибка обновления профиля:', error.message);
+            sendTo(ws, { type: 'profile_error', data: { message: 'Не удалось сохранить' } });
+            break;
+          }
+
+          log('info', `[PROFILE] ${current.nickname} обновил профиль`);
+
+          const profile = {
+            userId: updated.id,
+            nickname: updated.nickname,
+            role: updated.role,
+            bio: updated.bio || '',
+            avatarUrl: updated.avatar_url || null,
+            wins: updated.wins || 0,
+            losses: updated.losses || 0,
+            isSelf: true,
+            isFriend: false,
+          };
+
+          sendTo(ws, { type: 'profile_data', data: profile });
+
+          // Уведомить всех онлайн — обновить аватар в списках
+          broadcast({
+            type: 'profile_changed',
+            data: {
+              userId: updated.id,
+              nickname: updated.nickname,
+              avatarUrl: updated.avatar_url || null,
+              bio: updated.bio || '',
+            },
+          });
+
+          break;
+        }
+
+        case 'friend_remove': {
+          const { friendId } = msg.data || {};
+          if (!friendId || friendId === current.userId) break;
+
+          const { error } = await supabaseAdmin
+            .from('friends')
+            .delete()
+            .or(`and(user_id.eq.${current.userId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${current.userId})`);
+
+          if (error) {
+            log('error', 'Ошибка удаления друга:', error.message);
+            break;
+          }
+
+          log('info', `[FRIENDS] ${current.nickname} удалил из друзей ${friendId}`);
+
+          const friendWs = [...clients.entries()].find(([, c]) => c.userId === friendId)?.[0];
+
+          sendTo(ws, { type: 'friend_removed', data: { userId: friendId } });
+          if (friendWs) sendTo(friendWs, { type: 'friend_removed', data: { userId: current.userId } });
+
+          // обновить списки у обоих
+          const myList = await getFriendsList(current.userId);
+          sendTo(ws, { type: 'friends_list', data: myList });
+
+          if (friendWs) {
+            const hisList = await getFriendsList(friendId);
+            sendTo(friendWs, { type: 'friends_list', data: hisList });
+          }
+
+          break;
+        }
+
         // ===== ДУЭЛИ =====
         case 'duel_request': {
           const targetId = msg.data.targetId;
@@ -1210,14 +1438,15 @@ wss.on('connection', ws => {
               const ids = friendIds.map(f => f.friend_id);
               const { data: users } = await supabase
                 .from('users')
-                .select('id, nickname')
+                .select('id, nickname, avatar_url')
                 .in('id', ids);
               if (users) {
                 wsTo.send(JSON.stringify({
                   type: 'friends_list',
                   data: users.map(u => ({
                     userId: u.id,
-                    nickname: u.nickname
+                    nickname: u.nickname,
+                    avatarUrl: u.avatar_url || null,
                   }))
                 }));
               }
@@ -1260,33 +1489,8 @@ wss.on('connection', ws => {
         }
 
         case 'get_friends': {
-          const { data: friendIds, error } = await supabase
-            .from('friends')
-            .select('friend_id')
-            .eq('user_id', current.userId);
-
-          if (!error && friendIds && friendIds.length > 0) {
-            const ids = friendIds.map(f => f.friend_id);
-            const { data: users, error: userError } = await supabase
-              .from('users')
-              .select('id, nickname')
-              .in('id', ids);
-            if (!userError && users) {
-              ws.send(JSON.stringify({
-                type: 'friends_list',
-                data: users.map(u => ({
-                  userId: u.id,
-                  nickname: u.nickname
-                }))
-              }));
-            } else {
-              console.warn('Ошибка получения ников друзей:', userError);
-            }
-          } else if (friendIds && friendIds.length === 0) {
-            ws.send(JSON.stringify({ type: 'friends_list', data: [] }));
-          } else {
-            console.warn('Ошибка получения друзей:', error);
-          }
+          const list = await getFriendsList(current.userId);
+          sendTo(ws, { type: 'friends_list', data: list });
           break;
         }
       }
