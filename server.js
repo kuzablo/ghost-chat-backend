@@ -507,6 +507,11 @@ wss.on('connection', ws => {
           break;
         }
 
+        case 'ping': {
+          sendTo(ws, { type: 'pong', data: msg.data });
+          break;
+        }
+
         case 'typing': {
           current.isTyping = msg.data.isTyping;
           broadcast(
