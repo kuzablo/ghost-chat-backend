@@ -10,11 +10,12 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.20.1] players и friends отдают avatarUrl; аватар обновляется в client при изменении
 // [2.20.0] профили: bio, аватар, удаление друга
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.20.0';
+const VERSION = '2.20.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -47,7 +48,6 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-// [2.20.0] отдельный multer для аватара — 2 МБ, только изображения
 const uploadAvatar = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
@@ -105,7 +105,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ===== [2.20.0] ЗАГРУЗКА АВАТАРА =====
+// ===== ЗАГРУЗКА АВАТАРА =====
 app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -142,7 +142,7 @@ app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => 
       throw error;
     }
 
-    const { data: urlData } = supabaseAdmin.storage
+    const { data: urlData } = await supabaseAdmin.storage
       .from('chat-images')
       .getPublicUrl(filePath);
     const publicURL = urlData?.publicUrl;
@@ -331,7 +331,15 @@ function getOnlinePlayers() {
   const now = Date.now();
   return [...clients.values()]
     .filter(c => (!c.bannedUntil || c.bannedUntil < now) && c.nickname !== 'Аноним')
-    .map(c => ({ id: c.id, userId: c.userId, nickname: c.nickname, role: c.role, wins: c.wins, losses: c.losses }));
+    .map(c => ({
+      id: c.id,
+      userId: c.userId,
+      nickname: c.nickname,
+      role: c.role,
+      wins: c.wins,
+      losses: c.losses,
+      avatarUrl: c.avatarUrl || null,
+    }));
 }
 
 function determineWinner(choice1, choice2) {
@@ -520,7 +528,7 @@ async function pushToUser(recipientId, payload) {
   await sendPushToUser(recipientId, payload);
 }
 
-// ===== [2.20.0] helper: собрать профиль =====
+// ===== helper: собрать профиль =====
 async function buildProfile(userId, currentUserId) {
   const { data: user, error } = await supabaseAdmin
     .from('users')
@@ -530,7 +538,6 @@ async function buildProfile(userId, currentUserId) {
 
   if (error || !user) return null;
 
-  // является ли друг currentUser?
   let isFriend = false;
   if (userId !== currentUserId) {
     const { data: rel } = await supabaseAdmin
@@ -555,7 +562,7 @@ async function buildProfile(userId, currentUserId) {
   };
 }
 
-// ===== [2.20.0] helper: список друзей для юзера =====
+// ===== helper: список друзей для юзера =====
 async function getFriendsList(userId) {
   const { data: friendIds } = await supabaseAdmin
     .from('friends')
@@ -595,6 +602,7 @@ wss.on('connection', ws => {
     role: 'user',
     wins: 0,
     losses: 0,
+    avatarUrl: null,
     bannedUntil: null,
     duel: null,
     isTyping: false,
@@ -630,7 +638,7 @@ wss.on('connection', ws => {
 
         const { data: dbUser } = await supabase
           .from('users')
-          .select('banned_forever, role, wins, losses')
+          .select('banned_forever, role, wins, losses, avatar_url')
           .eq('id', decoded.userId)
           .single();
 
@@ -649,6 +657,7 @@ wss.on('connection', ws => {
         current.role = dbUser.role;
         current.wins = dbUser.wins || 0;
         current.losses = dbUser.losses || 0;
+        current.avatarUrl = dbUser.avatar_url || null;
         current.lastActivity = Date.now();
 
         const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
@@ -1091,7 +1100,7 @@ wss.on('connection', ws => {
           break;
         }
 
-        // ===== [2.20.0] ПРОФИЛЬ =====
+        // ===== ПРОФИЛЬ =====
         case 'profile_get': {
           const { userId } = msg.data || {};
           if (!userId) break;
@@ -1131,6 +1140,7 @@ wss.on('connection', ws => {
             break;
           }
 
+          current.avatarUrl = updated.avatar_url || null;
           log('info', `[PROFILE] ${current.nickname} обновил профиль`);
 
           const profile = {
@@ -1147,7 +1157,6 @@ wss.on('connection', ws => {
 
           sendTo(ws, { type: 'profile_data', data: profile });
 
-          // Уведомить всех онлайн — обновить аватар в списках
           broadcast({
             type: 'profile_changed',
             data: {
@@ -1182,7 +1191,6 @@ wss.on('connection', ws => {
           sendTo(ws, { type: 'friend_removed', data: { userId: friendId } });
           if (friendWs) sendTo(friendWs, { type: 'friend_removed', data: { userId: current.userId } });
 
-          // обновить списки у обоих
           const myList = await getFriendsList(current.userId);
           sendTo(ws, { type: 'friends_list', data: myList });
 
