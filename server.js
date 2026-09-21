@@ -10,13 +10,15 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
+//          отдают avatarUrl и requestId — для ритуала дружбы на клиенте
 // [2.21.1] список забаненных навсегда уходит клиенту — фронт рисует метку
 // [2.21.0] players и friends отдают avatarUrl; аватар обновляется в client при изменении
 // [2.20.0] профили: bio, аватар, удаление друга
 // [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
 // [2.19.0] Web Push: бейдж на иконке PWA
 // [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.21.1';
+const VERSION = '2.21.2';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -1379,7 +1381,7 @@ wss.on('connection', ws => {
 
           const { data: receiver, error: userError } = await supabase
             .from('users')
-            .select('id, nickname')
+            .select('id, nickname, avatar_url')
             .eq('id', receiverId)
             .single();
           if (userError || !receiver) break;
@@ -1411,9 +1413,15 @@ wss.on('connection', ws => {
             break;
           }
 
+          // [2.21.2] avatarUrl и requestId — для ритуала дружбы на клиенте
           sendTo(ws, {
             type: 'friend_request_sent',
-            data: { receiverId, receiverNickname: receiver.nickname }
+            data: {
+              requestId: request.id,
+              receiverId,
+              receiverNickname: receiver.nickname,
+              receiverAvatar: receiver.avatar_url || null,
+            }
           });
 
           const receiverWs = [...clients.entries()].find(([, c]) => c.userId === receiverId)?.[0];
@@ -1424,6 +1432,7 @@ wss.on('connection', ws => {
                 requestId: request.id,
                 senderId: current.userId,
                 senderNickname: current.nickname,
+                senderAvatar: current.avatarUrl || null,
               }
             });
           }
@@ -1533,11 +1542,16 @@ wss.on('connection', ws => {
             .update({ status: 'declined' })
             .eq('id', requestId);
 
+          // [2.21.2] nickname + avatar для ритуала
           const senderWs = [...clients.entries()].find(([, c]) => c.userId === request.sender_id)?.[0];
           if (senderWs) {
             sendTo(senderWs, {
               type: 'friend_request_declined',
-              data: { userId: current.userId, nickname: current.nickname }
+              data: {
+                userId: current.userId,
+                nickname: current.nickname,
+                avatarUrl: current.avatarUrl || null,
+              }
             });
           }
           break;
