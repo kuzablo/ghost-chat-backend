@@ -10,18 +10,15 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.21.4] прогрессивный кулдаун на friend_request после отказов;
-//          rejectCount уходит клиенту для «холодной нити»
-// [2.21.3] лимит загрузки поднят 10 → 25 МБ
+// [2.21.5] блокировки: таблица blocks, фильтр players по blocker_id,
+//          block_user / unblock_user, проверки в friend_request/private_message/duel_request
+// [2.21.4] прогрессивный кулдаун на friend_request после отказов
+// [2.21.3] лимит загрузки 10 → 25 МБ
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
-//          отдают avatarUrl и requestId — для ритуала дружбы на клиенте
-// [2.21.1] список забаненных навсегда уходит клиенту — фронт рисует метку
-// [2.21.0] players и friends отдают avatarUrl; аватар обновляется в client при изменении
+// [2.21.1] список забаненных навсегда
+// [2.21.0] players и friends отдают avatarUrl
 // [2.20.0] профили: bio, аватар, удаление друга
-// [2.19.1] пустой текст можно сохранять только для сообщений с картинкой
-// [2.19.0] Web Push: бейдж на иконке PWA
-// [2.18.1] замена старого соединения вместо отказа 4002
-const VERSION = '2.21.4';
+const VERSION = '2.21.5';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -29,10 +26,9 @@ const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
 
-// [2.21.4] ступени кулдауна по числу отказов подряд
-const FRIEND_CD_MS_1 = 5 * 60 * 1000;         // 5 мин
-const FRIEND_CD_MS_2 = 60 * 60 * 1000;        // 1 час
-const FRIEND_CD_MS_3 = 24 * 60 * 60 * 1000;   // 24 часа
+const FRIEND_CD_MS_1 = 5 * 60 * 1000;
+const FRIEND_CD_MS_2 = 60 * 60 * 1000;
+const FRIEND_CD_MS_3 = 24 * 60 * 60 * 1000;
 
 function calcFriendCooldownMs(count) {
   if (count >= 3) return FRIEND_CD_MS_3;
@@ -361,7 +357,7 @@ function broadcast(payload, exceptWs = null) {
   });
 }
 
-// [2.21.1] достаём список id забаненных навсегда
+// ===== ЗАБАНЕННЫЕ НАВСЕГДА =====
 async function getBannedUserIds() {
   const { data, error } = await supabaseAdmin
     .from('users')
@@ -374,6 +370,59 @@ async function getBannedUserIds() {
   return (data || []).map(u => u.id);
 }
 
+// ===== БЛОКИРОВКИ =====
+// [2.21.5] кого я заблокировал (с ником и аватаром)
+async function getBlockedByMe(blockerId) {
+  const { data: rows, error } = await supabaseAdmin
+    .from('blocks')
+    .select('blocked_id')
+    .eq('blocker_id', blockerId);
+  if (error || !rows || rows.length === 0) return [];
+
+  const ids = rows.map(r => r.blocked_id);
+  const { data: users } = await supabaseAdmin
+    .from('users')
+    .select('id, nickname, avatar_url')
+    .in('id', ids);
+
+  const order = new Map(ids.map((id, i) => [id, i]));
+  return (users || [])
+    .map(u => ({
+      userId: u.id,
+      nickname: u.nickname,
+      avatarUrl: u.avatar_url || null,
+    }))
+    .sort((a, b) => (order.get(a.userId) ?? 0) - (order.get(b.userId) ?? 0));
+}
+
+// [2.21.5] карта блокировок: Map<blocker_id, Set<blocked_id>>
+async function getAllBlocksMap() {
+  const { data, error } = await supabaseAdmin
+    .from('blocks')
+    .select('blocker_id, blocked_id');
+  if (error) {
+    log('error', 'Ошибка загрузки блокировок:', error.message);
+    return new Map();
+  }
+  const map = new Map();
+  (data || []).forEach(b => {
+    if (!map.has(b.blocker_id)) map.set(b.blocker_id, new Set());
+    map.get(b.blocker_id).add(b.blocked_id);
+  });
+  return map;
+}
+
+// [2.21.5] блокировка в любую сторону между a и b
+async function isBlockedEitherWay(a, b) {
+  const { data } = await supabaseAdmin
+    .from('blocks')
+    .select('blocker_id')
+    .or(`and(blocker_id.eq.${a},blocked_id.eq.${b}),and(blocker_id.eq.${b},blocked_id.eq.${a})`)
+    .limit(1);
+  return !!(data && data.length > 0);
+}
+
+// [2.21.5] список онлайн-игроков без тех, кого зритель заблокировал
 function getOnlinePlayers() {
   const now = Date.now();
   return [...clients.values()]
@@ -387,6 +436,20 @@ function getOnlinePlayers() {
       losses: c.losses,
       avatarUrl: c.avatarUrl || null,
     }));
+}
+
+async function broadcastPlayers() {
+  const all = getOnlinePlayers();
+  const blocksMap = await getAllBlocksMap();
+
+  for (const [ws, client] of clients.entries()) {
+    if (!client.userId) continue;
+    const blocked = blocksMap.get(client.userId);
+    const filtered = (blocked && blocked.size > 0)
+      ? all.filter(p => !blocked.has(p.userId) || p.userId === client.userId)
+      : all;
+    sendTo(ws, { type: 'players', data: filtered });
+  }
 }
 
 function determineWinner(choice1, choice2) {
@@ -575,7 +638,6 @@ async function pushToUser(recipientId, payload) {
   await sendPushToUser(recipientId, payload);
 }
 
-// ===== helper: собрать профиль =====
 async function buildProfile(userId, currentUserId) {
   const { data: user, error } = await supabaseAdmin
     .from('users')
@@ -612,7 +674,6 @@ async function buildProfile(userId, currentUserId) {
   };
 }
 
-// ===== helper: список друзей для юзера =====
 async function getFriendsList(userId) {
   const { data: friendIds } = await supabaseAdmin
     .from('friends')
@@ -743,13 +804,20 @@ wss.on('connection', ws => {
           data: { bannedUserIds },
         }));
 
+        // [2.21.5] мой список заблокированных
+        const blockedByMe = await getBlockedByMe(current.userId);
+        ws.send(JSON.stringify({
+          type: 'blocks_list',
+          data: { blocked: blockedByMe },
+        }));
+
         const history = await loadHistory();
         ws.send(JSON.stringify({ type: 'history', data: history }));
 
         const dialogs = await getDialogs(current.userId);
         ws.send(JSON.stringify({ type: 'dialogs_list', data: dialogs }));
 
-        broadcast({ type: 'players', data: getOnlinePlayers() });
+        await broadcastPlayers();
 
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
@@ -780,7 +848,9 @@ wss.on('connection', ws => {
         msg.type !== 'private_message' &&
         msg.type !== 'private_typing' &&
         msg.type !== 'private_history' &&
-        msg.type !== 'profile_get') {
+        msg.type !== 'profile_get' &&
+        msg.type !== 'block_user' &&
+        msg.type !== 'unblock_user') {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
@@ -954,6 +1024,9 @@ wss.on('connection', ws => {
           const { recipientId, text, imageUrl } = msg.data;
           if (!recipientId || (!text && !imageUrl)) break;
           if (recipientId === current.userId) break;
+
+          // [2.21.5] блокировка в любую сторону = не доставляем
+          if (await isBlockedEitherWay(current.userId, recipientId)) break;
 
           const { data: recipientUser, error: recipientError } = await supabaseAdmin
             .from('users')
@@ -1273,6 +1346,94 @@ wss.on('connection', ws => {
           break;
         }
 
+        // ===== БЛОКИРОВКА =====
+        // [2.21.5] заблокировать пользователя
+        case 'block_user': {
+          const { userId } = msg.data || {};
+          if (!userId || userId === current.userId) break;
+
+          // Проверим, что пользователь существует
+          const { data: targetUser } = await supabaseAdmin
+            .from('users')
+            .select('id, nickname')
+            .eq('id', userId)
+            .single();
+          if (!targetUser) break;
+
+          // Вставляем в blocks (UNIQUE не даст дважды)
+          const { error: insertError } = await supabaseAdmin
+            .from('blocks')
+            .insert([{ blocker_id: current.userId, blocked_id: userId }]);
+
+          if (insertError && insertError.code !== '23505') {
+            log('error', 'Ошибка блокировки:', insertError.message);
+            break;
+          }
+
+          // Сносим pending-запросы в обе стороны
+          await supabaseAdmin
+            .from('friend_requests')
+            .delete()
+            .or(`and(sender_id.eq.${current.userId},receiver_id.eq.${userId}),and(sender_id.eq.${userId},receiver_id.eq.${current.userId})`);
+
+          // Если были друзьями — расфрендим
+          await supabaseAdmin
+            .from('friends')
+            .delete()
+            .or(`and(user_id.eq.${current.userId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${current.userId})`);
+
+          // Убираем дуэль, если была
+          const targetWs = [...clients.entries()].find(([, c]) => c.userId === userId)?.[0];
+          const targetClient = targetWs ? clients.get(targetWs) : null;
+          if (current.duel && current.duel.opponent === targetClient) {
+            current.duel = null;
+            if (targetClient) targetClient.duel = null;
+          }
+          if (targetClient && targetClient.duel && targetClient.duel.opponent === current) {
+            targetClient.duel = null;
+            current.duel = null;
+          }
+
+          // Обновляем мой список
+          const blockedByMe = await getBlockedByMe(current.userId);
+          sendTo(ws, { type: 'blocks_list', data: { blocked: blockedByMe } });
+
+          // Обновляем друзей в обе стороны
+          const myFriends = await getFriendsList(current.userId);
+          sendTo(ws, { type: 'friends_list', data: myFriends });
+
+          if (targetWs) {
+            sendTo(targetWs, { type: 'friend_removed', data: { userId: current.userId } });
+            const hisFriends = await getFriendsList(userId);
+            sendTo(targetWs, { type: 'friends_list', data: hisFriends });
+          }
+
+          await broadcastPlayers();
+
+          log('info', `[BLOCKS] ${current.nickname} заблокировал ${targetUser.nickname}`);
+          break;
+        }
+
+        // [2.21.5] разблокировать
+        case 'unblock_user': {
+          const { userId } = msg.data || {};
+          if (!userId) break;
+
+          await supabaseAdmin
+            .from('blocks')
+            .delete()
+            .eq('blocker_id', current.userId)
+            .eq('blocked_id', userId);
+
+          const blockedByMe = await getBlockedByMe(current.userId);
+          sendTo(ws, { type: 'blocks_list', data: { blocked: blockedByMe } });
+
+          await broadcastPlayers();
+
+          log('info', `[BLOCKS] ${current.nickname} разблокировал ${userId}`);
+          break;
+        }
+
         // ===== ДУЭЛИ =====
         case 'duel_request': {
           const targetId = msg.data.targetId;
@@ -1281,6 +1442,9 @@ wss.on('connection', ws => {
           const target = clients.get(targetWs);
           if (!target || target.id === current.id || target.userId === current.userId) break;
           if (target.bannedUntil && target.bannedUntil > Date.now()) break;
+
+          // [2.21.5] блокировка = не доставляем вызов
+          if (await isBlockedEitherWay(current.userId, target.userId)) break;
 
           if (target.pendingInviteTimeout) {
             clearTimeout(target.pendingInviteTimeout);
@@ -1359,7 +1523,7 @@ wss.on('connection', ws => {
 
             current.duel = null;
             opponent.duel = null;
-            broadcast({ type: 'players', data: getOnlinePlayers() });
+            await broadcastPlayers();
           }
           break;
         }
@@ -1386,7 +1550,7 @@ wss.on('connection', ws => {
             targetWs.close(4006, 'У нас тут таких не любят');
           }
 
-          broadcast({ type: 'players', data: getOnlinePlayers() });
+          await broadcastPlayers();
 
           const bannedUserIds = await getBannedUserIds();
           broadcast({
@@ -1407,6 +1571,12 @@ wss.on('connection', ws => {
           const { receiverId } = msg.data;
           if (!receiverId || receiverId === current.userId) break;
 
+          // [2.21.5] блокировка в любую сторону = не доставляем запрос
+          if (await isBlockedEitherWay(current.userId, receiverId)) {
+            sendTo(ws, { type: 'admin_error', data: { message: 'Не получится' } });
+            break;
+          }
+
           const { data: receiver, error: userError } = await supabase
             .from('users')
             .select('id, nickname, avatar_url')
@@ -1414,7 +1584,6 @@ wss.on('connection', ws => {
             .single();
           if (userError || !receiver) break;
 
-          // [2.21.4] кулдаун и счётчик отказов
           const { data: senderRow } = await supabaseAdmin
             .from('users')
             .select('friend_request_cooldowns')
@@ -1425,7 +1594,7 @@ wss.on('connection', ws => {
             ? { ...senderRow.friend_request_cooldowns }
             : {};
 
-          // [2.21.4] если Б сам слал мне запрос когда-либо — сбрасываем кулдаун
+          // [2.21.4] если Б сам слал мне запрос — сбрасываем кулдаун
           const { data: incoming } = await supabase
             .from('friend_requests')
             .select('id')
@@ -1525,6 +1694,9 @@ wss.on('connection', ws => {
             log('error', 'Запрос не найден или уже обработан');
             break;
           }
+
+          // [2.21.5] если вдруг блок — не принимаем
+          if (await isBlockedEitherWay(current.userId, request.sender_id)) break;
 
           const { data: senderUser } = await supabase
             .from('users')
@@ -1687,7 +1859,7 @@ wss.on('connection', ws => {
     if (client.pendingInviteTimeout) clearTimeout(client.pendingInviteTimeout);
     clients.delete(ws);
     wsById.delete(client.id);
-    broadcast({ type: 'players', data: getOnlinePlayers() });
+    broadcastPlayers().catch(err => log('error', 'broadcastPlayers on close:', err.message));
     const reason = reasonBuf?.toString() || '';
     log('info', `Соединение закрыто: ${client.id} (код ${code}${reason ? ', ' + reason : ''})`);
   });
