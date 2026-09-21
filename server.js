@@ -10,15 +10,15 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.21.6] avatars_map при auth — аватарки офлайн-юзеров в истории чата
-//          лимит аватарки 2 → 25 МБ
-// [2.21.5] блокировки: таблица blocks, фильтр players, block_user/unblock_user
+// [2.21.7] fix: pendingRequests — senderNickname через отдельный запрос
+// [2.21.6] avatars_map при auth; лимит аватарки 25 МБ
+// [2.21.5] блокировки: blocks, фильтр players, block_user/unblock_user
 // [2.21.4] прогрессивный кулдаун на friend_request
 // [2.21.3] лимит загрузки 10 → 25 МБ
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.21.6';
+const VERSION = '2.21.7';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -370,7 +370,6 @@ async function getBannedUserIds() {
   return (data || []).map(u => u.id);
 }
 
-// [2.21.6] карта всех аватарок — офлайн-юзеры в истории чата
 async function getAvatarsMap() {
   const { data, error } = await supabaseAdmin
     .from('users')
@@ -815,7 +814,6 @@ wss.on('connection', ws => {
           data: { bannedUserIds },
         }));
 
-        // [2.21.6] карта аватарок — до history, чтобы аватарки были сразу
         const avatars = await getAvatarsMap();
         ws.send(JSON.stringify({
           type: 'avatars_map',
@@ -836,18 +834,29 @@ wss.on('connection', ws => {
 
         await broadcastPlayers();
 
+        // [2.21.7] правильный select: сначала id sender_id, потом ники
         const { data: pendingRequests } = await supabase
           .from('friend_requests')
-          .select('id, sender_id, sender:nickname')
+          .select('id, sender_id')
           .eq('receiver_id', current.userId)
           .eq('status', 'pending');
-        if (pendingRequests) {
+
+        if (pendingRequests && pendingRequests.length > 0) {
+          const senderIds = pendingRequests.map(r => r.sender_id);
+          const { data: senders } = await supabaseAdmin
+            .from('users')
+            .select('id, nickname')
+            .in('id', senderIds);
+
+          const nickMap = {};
+          (senders || []).forEach(u => { nickMap[u.id] = u.nickname; });
+
           ws.send(JSON.stringify({
             type: 'friend_requests_list',
             data: pendingRequests.map(r => ({
               requestId: r.id,
               senderId: r.sender_id,
-              senderNickname: r.sender?.nickname || 'Unknown'
+              senderNickname: nickMap[r.sender_id] || 'Unknown',
             }))
           }));
         }
