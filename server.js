@@ -22,7 +22,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.1';
+const VERSION = '2.22.2';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -34,7 +34,7 @@ const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
-const IG_FETCH_TIMEOUT_MS = 4000;
+const IG_FETCH_TIMEOUT_MS = 7000;
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -294,20 +294,34 @@ app.get('/api/instagram-embed', async (req, res) => {
     `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
   ];
 
+  const BROWSER_UA =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ' +
+    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
   const fetchOne = async (endpoint) => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
     try {
       const resp = await fetch(endpoint, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; BanjoboyChat/1.0; +https://banjoboy420.ru)',
-          'Accept': 'application/json',
+          'User-Agent': BROWSER_UA,
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
         },
         signal: ctrl.signal,
       });
-      if (!resp.ok) return null;
+
+      if (!resp.ok) {
+        const preview = await resp.text().catch(() => '');
+        log('warn', `[IG] ${endpoint} → HTTP ${resp.status}, body: ${preview.slice(0, 200)}`);
+        return null;
+      }
+
       const data = await resp.json();
-      if (!data || !data.thumbnail_url) return null;
+      if (!data || !data.thumbnail_url) {
+        log('warn', `[IG] ${endpoint} → ok, но нет thumbnail_url`);
+        return null;
+      }
 
       const isVideo =
         /\/(reel|reels|tv)\//.test(url) ||
@@ -322,7 +336,7 @@ app.get('/api/instagram-embed', async (req, res) => {
         url,
       };
     } catch (err) {
-      log('warn', `Instagram oEmbed failed (${endpoint}):`, err.message);
+      log('warn', `[IG] ${endpoint} → ${err.name}: ${err.message}`);
       return null;
     } finally {
       clearTimeout(t);
@@ -335,6 +349,7 @@ app.get('/api/instagram-embed', async (req, res) => {
     .map(r => r.value)[0];
 
   if (!payload) {
+    log('warn', `[IG] все endpoint упали для ${url}`);
     return res.status(502).json({ error: 'Instagram oEmbed unavailable' });
   }
 
