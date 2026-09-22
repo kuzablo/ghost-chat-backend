@@ -30,7 +30,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.23.1';
+const VERSION = '2.23.3';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -843,6 +843,7 @@ const mapMessageRow = (row) => ({
   time: Number(row.time),
   reactions: row.reactions || {},
   replyTo: row.reply_to || null,
+  forwardedFrom: row.forwarded_from || null,
 });
 
 async function loadHistory(limit = MAX_MESSAGES) {
@@ -880,6 +881,7 @@ async function getPrivateHistory(userId1, userId2) {
     created_at: msg.created_at,
     is_read: msg.is_read || false,
     reactions: msg.reactions || {},
+    forwardedFrom: msg.forwarded_from || null,
   }));
 }
 
@@ -1291,7 +1293,7 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl, stickerUrl, replyTo } = msg.data;
+          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom } = msg.data;
 
           if (!checkRate(current.userId)) {
             sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
@@ -1308,6 +1310,24 @@ wss.on('connection', ws => {
             safeText = safeText.slice(0, MAX_TEXT_LENGTH);
           }
 
+          // [2.23.3] Валидация метки «Переслано от».
+          // Автор — всегда первоисточник. Пересылаем пересланное — метка копируется как есть.
+          let safeForwardedFrom = null;
+          if (forwardedFrom && typeof forwardedFrom === 'object') {
+            const fn = typeof forwardedFrom.nickname === 'string'
+              ? forwardedFrom.nickname.slice(0, 60) : null;
+            if (fn) {
+              safeForwardedFrom = {
+                nickname: fn,
+                originalId: typeof forwardedFrom.originalId === 'string'
+                  ? forwardedFrom.originalId.slice(0, 100) : null,
+                originalTime: Number.isFinite(forwardedFrom.originalTime)
+                  ? Number(forwardedFrom.originalTime) : null,
+                fromPrivate: !!forwardedFrom.fromPrivate,
+              };
+            }
+          }
+
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             user_id: current.userId,
@@ -1318,6 +1338,7 @@ wss.on('connection', ws => {
             time: Date.now(),
             reactions: {},
             reply_to: replyTo || null,
+            forwarded_from: safeForwardedFrom,
           };
 
           const { error } = await supabaseAdmin.from('messages').insert([row]);
@@ -1497,7 +1518,7 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl, stickerUrl } = msg.data;
+          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom } = msg.data;
           if (!recipientId || (!text && !imageUrl && !stickerUrl)) break;
           if (recipientId === current.userId) break;
 
@@ -1521,6 +1542,23 @@ wss.on('connection', ws => {
 
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
+          // [2.23.3] Валидация метки «Переслано от»
+          let safeForwardedFrom = null;
+          if (forwardedFrom && typeof forwardedFrom === 'object') {
+            const fn = typeof forwardedFrom.nickname === 'string'
+              ? forwardedFrom.nickname.slice(0, 60) : null;
+            if (fn) {
+              safeForwardedFrom = {
+                nickname: fn,
+                originalId: typeof forwardedFrom.originalId === 'string'
+                  ? forwardedFrom.originalId.slice(0, 100) : null,
+                originalTime: Number.isFinite(forwardedFrom.originalTime)
+                  ? Number(forwardedFrom.originalTime) : null,
+                fromPrivate: !!forwardedFrom.fromPrivate,
+              };
+            }
+          }
+
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
             .insert([{
@@ -1531,6 +1569,7 @@ wss.on('connection', ws => {
               sticker_url: stickerUrl || null,
               is_read: false,
               reactions: {},
+              forwarded_from: safeForwardedFrom,
             }])
             .select()
             .single();
@@ -1543,6 +1582,8 @@ wss.on('connection', ws => {
           const messageForClient = {
             id: savedMessage.id,
             senderId: current.userId,
+            senderNickname: current.nickname,
+            senderAvatar: current.avatarUrl || null,
             recipientId,
             text: savedMessage.content,
             imageUrl: savedMessage.image_url,
@@ -1550,6 +1591,7 @@ wss.on('connection', ws => {
             created_at: savedMessage.created_at,
             is_read: false,
             reactions: savedMessage.reactions || {},
+            forwardedFrom: savedMessage.forwarded_from || null,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
