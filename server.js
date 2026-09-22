@@ -12,23 +12,25 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.22.4] Instagram oEmbed через Cloudflare Worker — обход блокировки с Amvera
+// [2.23.0] Стикеры: загрузка admin-only, панель, отправка в чат и личку
+// [2.22.6] IG oEmbed + thumb через base64url + Cloudflare Worker
+// [2.22.4] Instagram oEmbed через Cloudflare Worker
 // [2.22.3] ipv4first + err.cause в логах IG
-// [2.22.2] браузерный UA для IG (отменено в 2.22.4 — UA ставит воркер)
+// [2.22.2] браузерный UA для IG (отменено в 2.22.4)
 // [2.22.1] IG oEmbed: параллельные запросы, таймаут 4с
-// [2.22.0] Instagram oEmbed: endpoint /api/instagram-embed + кэш в памяти
-// [2.21.10] dialogs_bg: отдаём при auth, принимаем dialogs_bg_update
+// [2.22.0] Instagram oEmbed: endpoint /api/instagram-embed + кэш
+// [2.21.10] dialogs_bg
 // [2.21.9] getDialogs отдаёт avatarUrl
 // [2.21.8] чистка pending friend_requests
 // [2.21.7] fix pendingRequests senderNickname
-// [2.21.6] avatars_map при auth; лимит аватарки 25 МБ
+// [2.21.6] avatars_map; лимит аватарки 25 МБ
 // [2.21.5] блокировки: blocks, фильтр players, block_user/unblock_user
 // [2.21.4] прогрессивный кулдаун на friend_request
 // [2.21.3] лимит загрузки 10 → 25 МБ
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.6';
+const VERSION = '2.23.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -36,6 +38,7 @@ const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
+const MAX_STICKER_MB = 2;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 
@@ -96,6 +99,17 @@ const uploadAvatar = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype || !file.mimetype.startsWith('image/')) {
       return cb(new Error('Only images allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+const uploadSticker = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_STICKER_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || file.mimetype !== 'image/gif') {
+      return cb(new Error('Only GIF allowed'));
     }
     cb(null, true);
   },
@@ -216,6 +230,89 @@ app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => 
   }
 });
 
+// ===== ЗАГРУЗКА СТИКЕРА (admin only) =====
+app.post('/api/upload-sticker', uploadSticker.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(401).json({ error: 'Token required' });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  // JWT не expiring — проверяем роль по БД
+  const { data: dbUser } = await supabaseAdmin
+    .from('users')
+    .select('role')
+    .eq('id', decoded.userId)
+    .single();
+
+  if (!dbUser || dbUser.role !== 'admin') {
+    log('warn', `[STICKER] попытка загрузки не-админом: ${decoded.nickname}`);
+    return res.status(403).json({ error: 'Admin only' });
+  }
+
+  const file = req.file;
+  const fileName = `sticker_${Date.now()}_${Math.random().toString(36).slice(2)}.gif`;
+  const filePath = `stickers/${fileName}`;
+
+  try {
+    const { error: uploadErr } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: 'image/gif',
+        cacheControl: '31536000',
+        upsert: false,
+      });
+
+    if (uploadErr) {
+      console.error('❌ Sticker upload error:', uploadErr);
+      throw uploadErr;
+    }
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+    const publicURL = urlData?.publicUrl;
+
+    if (!publicURL) {
+      throw new Error('Public URL not generated');
+    }
+
+    const { data: inserted, error: insertErr } = await supabaseAdmin
+      .from('stickers')
+      .insert([{ url: publicURL }])
+      .select()
+      .single();
+
+    if (insertErr) {
+      console.error('❌ Sticker insert error:', insertErr);
+      throw insertErr;
+    }
+
+    const allStickers = await getStickers(true);
+
+    broadcast({
+      type: 'stickers_list',
+      data: { stickers: allStickers },
+    });
+
+    log('info', `[STICKER] ${decoded.nickname} загрузил стикер (${allStickers.length} всего)`);
+    res.json({ sticker: inserted, stickers: allStickers });
+  } catch (err) {
+    console.error('Ошибка загрузки стикера:', err);
+    res.status(500).json({ error: err.message || 'Sticker upload failed' });
+  }
+});
+
 // ===== ЗАГРУЗКА ФОНА ДИАЛОГОВ =====
 app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, res) => {
   if (!req.file) {
@@ -285,6 +382,32 @@ function isValidInstagramUrl(url) {
   }
 }
 
+function b64urlEncode(s) {
+  return Buffer.from(s, 'utf8').toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(s) {
+  const pad = 4 - (s.length % 4);
+  const padded = s + (pad < 4 ? '='.repeat(pad) : '');
+  return Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+}
+
+function isValidInstagramThumbUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return (
+      host === 'scontent.cdninstagram.com' ||
+      host.endsWith('.cdninstagram.com') ||
+      host.endsWith('.fbcdn.net')
+    );
+  } catch {
+    return false;
+  }
+}
+
 app.get('/api/instagram-embed', async (req, res) => {
   const url = String(req.query.url || '').trim();
 
@@ -297,7 +420,6 @@ app.get('/api/instagram-embed', async (req, res) => {
     return res.json(cached.data);
   }
 
-  // [2.22.4] Instagram недоступен с Amvera — ходим через Cloudflare Worker
   const encoded = encodeURIComponent(url);
   const endpoints = [
     `${IG_PROXY_URL}/?url=${encodeURIComponent(`https://www.instagram.com/api/v1/oembed/?url=${encoded}`)}`,
@@ -308,9 +430,7 @@ app.get('/api/instagram-embed', async (req, res) => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
     try {
-      const resp = await fetch(endpoint, {
-        signal: ctrl.signal,
-      });
+      const resp = await fetch(endpoint, { signal: ctrl.signal });
 
       if (!resp.ok) {
         const preview = await resp.text().catch(() => '');
@@ -362,33 +482,6 @@ app.get('/api/instagram-embed', async (req, res) => {
   return res.json(payload);
 });
 
-// ===== INSTAGRAM THUMB PROXY =====
-function b64urlEncode(s) {
-  return Buffer.from(s, 'utf8').toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function b64urlDecode(s) {
-  const pad = 4 - (s.length % 4);
-  const padded = s + (pad < 4 ? '='.repeat(pad) : '');
-  return Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-}
-
-function isValidInstagramThumbUrl(url) {
-  if (typeof url !== 'string') return false;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    return (
-      host === 'scontent.cdninstagram.com' ||
-      host.endsWith('.cdninstagram.com') ||
-      host.endsWith('.fbcdn.net')
-    );
-  } catch {
-    return false;
-  }
-}
-
 app.get('/api/instagram-thumb', async (req, res) => {
   let url = '';
   try {
@@ -426,7 +519,6 @@ app.get('/api/instagram-thumb', async (req, res) => {
     res.status(502).end();
   }
 });
-
 
 // ===== РЕГИСТРАЦИЯ =====
 app.post('/api/register', async (req, res) => {
@@ -625,6 +717,33 @@ async function getAvatarsMap() {
   }));
 }
 
+// ===== СТИКЕРЫ =====
+let cachedStickers = null;
+
+async function getStickers(force = false) {
+  if (!force && cachedStickers) return cachedStickers;
+
+  const { data, error } = await supabaseAdmin
+    .from('stickers')
+    .select('id, url, order_index, created_at')
+    .order('order_index', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    log('error', 'Ошибка загрузки стикеров:', error.message);
+    return [];
+  }
+
+  cachedStickers = data || [];
+  return cachedStickers;
+}
+
+async function isValidStickerUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const list = await getStickers();
+  return list.some(s => s.url === url);
+}
+
 async function getBlockedByMe(blockerId) {
   const { data: rows, error } = await supabaseAdmin
     .from('blocks')
@@ -720,6 +839,7 @@ const mapMessageRow = (row) => ({
   nickname: row.nickname,
   text: row.text || '',
   imageUrl: row.image_url || null,
+  stickerUrl: row.sticker_url || null,
   time: Number(row.time),
   reactions: row.reactions || {},
   replyTo: row.reply_to || null,
@@ -756,6 +876,7 @@ async function getPrivateHistory(userId1, userId2) {
     recipientId: msg.recipient_id,
     text: msg.content,
     imageUrl: msg.image_url || null,
+    stickerUrl: msg.sticker_url || null,
     created_at: msg.created_at,
     is_read: msg.is_read || false,
     reactions: msg.reactions || {},
@@ -765,7 +886,7 @@ async function getPrivateHistory(userId1, userId2) {
 async function getDialogs(userId) {
   const { data: rows, error } = await supabaseAdmin
     .from('private_messages')
-    .select('sender_id, recipient_id, content, image_url, created_at, is_read')
+    .select('sender_id, recipient_id, content, image_url, sticker_url, created_at, is_read')
     .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
@@ -780,7 +901,7 @@ async function getDialogs(userId) {
     if (!map[otherId]) {
       map[otherId] = {
         userId: otherId,
-        lastText: row.content || (row.image_url ? '📷 фото' : ''),
+        lastText: row.content || (row.sticker_url ? '🎨 стикер' : '') || (row.image_url ? '📷 фото' : ''),
         lastAt: row.created_at,
         unread: 0,
       };
@@ -1069,6 +1190,12 @@ wss.on('connection', ws => {
           data: { avatars },
         }));
 
+        const stickers = await getStickers();
+        ws.send(JSON.stringify({
+          type: 'stickers_list',
+          data: { stickers },
+        }));
+
         const blockedByMe = await getBlockedByMe(current.userId);
         ws.send(JSON.stringify({
           type: 'blocks_list',
@@ -1164,10 +1291,15 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl, replyTo } = msg.data;
+          const { text, imageUrl, stickerUrl, replyTo } = msg.data;
 
           if (!checkRate(current.userId)) {
             sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
+            break;
+          }
+
+          if (stickerUrl && !(await isValidStickerUrl(stickerUrl))) {
+            log('warn', `[STICKER] попытка использовать несуществующий стикер: ${current.nickname}`);
             break;
           }
 
@@ -1182,6 +1314,7 @@ wss.on('connection', ws => {
             nickname: current.nickname,
             text: safeText,
             image_url: imageUrl || null,
+            sticker_url: stickerUrl || null,
             time: Date.now(),
             reactions: {},
             reply_to: replyTo || null,
@@ -1194,12 +1327,14 @@ wss.on('connection', ws => {
           }
           broadcast({ type: 'message', data: mapMessageRow(row) });
 
-          pushBroadcast(current.userId, {
-            title: current.nickname,
-            body: safeText ? safeText.slice(0, 120) : '📷 фото',
-            url: '/',
-            tag: `msg-${row.id}`,
-          }).catch(err => log('warn', 'pushBroadcast error:', err.message));
+          if (!stickerUrl) {
+            pushBroadcast(current.userId, {
+              title: current.nickname,
+              body: safeText ? safeText.slice(0, 120) : (imageUrl ? '📷 фото' : ''),
+              url: '/',
+              tag: `msg-${row.id}`,
+            }).catch(err => log('warn', 'pushBroadcast error:', err.message));
+          }
 
           break;
         }
@@ -1267,7 +1402,7 @@ wss.on('connection', ws => {
 
           const { data: existing, error: fetchError } = await supabaseAdmin
             .from('messages')
-            .select('user_id, image_url')
+            .select('user_id, image_url, sticker_url')
             .eq('id', messageId)
             .single();
           if (fetchError || !existing) break;
@@ -1278,7 +1413,7 @@ wss.on('connection', ws => {
           }
 
           const safeText = text.trim();
-          if (!safeText && !existing.image_url) break;
+          if (!safeText && !existing.image_url && !existing.sticker_url) break;
 
           const { data: updated, error: updateError } = await supabaseAdmin
             .from('messages')
@@ -1362,11 +1497,16 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl } = msg.data;
-          if (!recipientId || (!text && !imageUrl)) break;
+          const { recipientId, text, imageUrl, stickerUrl } = msg.data;
+          if (!recipientId || (!text && !imageUrl && !stickerUrl)) break;
           if (recipientId === current.userId) break;
 
           if (await isBlockedEitherWay(current.userId, recipientId)) break;
+
+          if (stickerUrl && !(await isValidStickerUrl(stickerUrl))) {
+            log('warn', `[STICKER] попытка использовать несуществующий стикер в личке: ${current.nickname}`);
+            break;
+          }
 
           const { data: recipientUser, error: recipientError } = await supabaseAdmin
             .from('users')
@@ -1388,6 +1528,7 @@ wss.on('connection', ws => {
               recipient_id: recipientId,
               content: text || '',
               image_url: imageUrl || null,
+              sticker_url: stickerUrl || null,
               is_read: false,
               reactions: {},
             }])
@@ -1405,6 +1546,7 @@ wss.on('connection', ws => {
             recipientId,
             text: savedMessage.content,
             imageUrl: savedMessage.image_url,
+            stickerUrl: savedMessage.sticker_url,
             created_at: savedMessage.created_at,
             is_read: false,
             reactions: savedMessage.reactions || {},
@@ -1416,7 +1558,10 @@ wss.on('connection', ws => {
             sendTo(recipientWs, { type: 'private_message', data: messageForClient });
           }
 
-          const lastPreview = savedMessage.content || (savedMessage.image_url ? '📷 фото' : '');
+          const lastPreview = savedMessage.content
+            || (savedMessage.sticker_url ? '🎨 стикер' : '')
+            || (savedMessage.image_url ? '📷 фото' : '');
+
           sendTo(ws, {
             type: 'dialog_update',
             data: {
@@ -1440,12 +1585,14 @@ wss.on('connection', ws => {
             });
           }
 
-          pushToUser(recipientId, {
-            title: `✉️ ${current.nickname}`,
-            body: lastPreview || 'Новое сообщение',
-            url: '/',
-            tag: `pm-${savedMessage.id}`,
-          }).catch(err => log('warn', 'pushToUser error:', err.message));
+          if (!stickerUrl) {
+            pushToUser(recipientId, {
+              title: `✉️ ${current.nickname}`,
+              body: lastPreview || 'Новое сообщение',
+              url: '/',
+              tag: `pm-${savedMessage.id}`,
+            }).catch(err => log('warn', 'pushToUser error:', err.message));
+          }
 
           break;
         }
