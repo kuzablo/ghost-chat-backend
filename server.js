@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.23.4] dialogs: lastFromMe + lastIsRead + dialog_read_update
 // [2.23.0] Стикеры: загрузка admin-only, панель, отправка в чат и личку
 // [2.22.6] IG oEmbed + thumb через base64url + Cloudflare Worker
 // [2.22.4] Instagram oEmbed через Cloudflare Worker
@@ -30,7 +31,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.23.3';
+const VERSION = '2.23.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -906,6 +907,8 @@ async function getDialogs(userId) {
         lastText: row.content || (row.sticker_url ? '🎨 стикер' : '') || (row.image_url ? '📷 фото' : ''),
         lastAt: row.created_at,
         unread: 0,
+        lastFromMe: row.sender_id === userId,
+        lastIsRead: row.is_read === true,
       };
     }
     if (row.recipient_id === userId && row.is_read === false) {
@@ -1612,6 +1615,8 @@ wss.on('connection', ws => {
               lastText: lastPreview,
               lastAt: savedMessage.created_at,
               unread: 0,
+              lastFromMe: true,
+              lastIsRead: false,
             },
           });
           if (recipientWs) {
@@ -1623,6 +1628,8 @@ wss.on('connection', ws => {
                 lastText: lastPreview,
                 lastAt: savedMessage.created_at,
                 unread: 'increment',
+                lastFromMe: false,
+                lastIsRead: false,
               },
             });
           }
@@ -1668,6 +1675,11 @@ wss.on('connection', ws => {
 
             if (senderWs) {
               sendTo(senderWs, { type: 'message_read', data: readData });
+              // [2.23.4] сообщаем отправителю: его сообщение прочитано — точка в диалогах гаснет
+              sendTo(senderWs, {
+                type: 'dialog_read_update',
+                data: { userId: current.userId },
+              });
             }
             sendTo(recipientWs, { type: 'message_read', data: readData });
 
