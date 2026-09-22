@@ -1,6 +1,8 @@
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
@@ -10,6 +12,10 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.22.4] Instagram oEmbed через Cloudflare Worker — обход блокировки с Amvera
+// [2.22.3] ipv4first + err.cause в логах IG
+// [2.22.2] браузерный UA для IG (отменено в 2.22.4 — UA ставит воркер)
+// [2.22.1] IG oEmbed: параллельные запросы, таймаут 4с
 // [2.22.0] Instagram oEmbed: endpoint /api/instagram-embed + кэш в памяти
 // [2.21.10] dialogs_bg: отдаём при auth, принимаем dialogs_bg_update
 // [2.21.9] getDialogs отдаёт avatarUrl
@@ -22,7 +28,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.2';
+const VERSION = '2.22.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -35,6 +41,7 @@ const MAX_DIALOGS_BG_LENGTH = 500;
 
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
 const IG_FETCH_TIMEOUT_MS = 7000;
+const IG_PROXY_URL = 'https://instagram-embed-proxy.kuzablo422.workers.dev';
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -289,25 +296,18 @@ app.get('/api/instagram-embed', async (req, res) => {
     return res.json(cached.data);
   }
 
+  // [2.22.4] Instagram недоступен с Amvera — ходим через Cloudflare Worker
+  const encoded = encodeURIComponent(url);
   const endpoints = [
-    `https://www.instagram.com/api/v1/oembed/?url=${encodeURIComponent(url)}`,
-    `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
+    `${IG_PROXY_URL}/?url=${encodeURIComponent(`https://www.instagram.com/api/v1/oembed/?url=${encoded}`)}`,
+    `${IG_PROXY_URL}/?url=${encodeURIComponent(`https://api.instagram.com/oembed/?url=${encoded}`)}`,
   ];
-
-  const BROWSER_UA =
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ' +
-    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
   const fetchOne = async (endpoint) => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
     try {
       const resp = await fetch(endpoint, {
-        headers: {
-          'User-Agent': BROWSER_UA,
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-        },
         signal: ctrl.signal,
       });
 
@@ -336,7 +336,10 @@ app.get('/api/instagram-embed', async (req, res) => {
         url,
       };
     } catch (err) {
-      log('warn', `[IG] ${endpoint} → ${err.name}: ${err.message}`);
+      const cause = err.cause
+        ? `${err.cause.code || err.cause.name || ''} ${err.cause.message || ''}`.trim()
+        : 'no-cause';
+      log('warn', `[IG] ${endpoint} → ${err.name}: ${err.message} | cause: ${cause}`);
       return null;
     } finally {
       clearTimeout(t);
@@ -812,7 +815,7 @@ async function pushBroadcast(senderUserId, payload) {
   const targets = [...new Set(subs.map(s => s.user_id))]
     .filter(uid => !onlineUserIds.has(uid));
 
-  await Promise.all(targets.map(uid => sendToPushToUser(uid, payload)));
+  await Promise.all(targets.map(uid => sendPushToUser(uid, payload)));
 }
 
 async function pushToUser(recipientId, payload) {
