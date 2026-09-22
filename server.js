@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.4';
+const VERSION = '2.22.5';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -42,6 +42,7 @@ const MAX_DIALOGS_BG_LENGTH = 500;
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
 const IG_FETCH_TIMEOUT_MS = 7000;
 const IG_PROXY_URL = 'https://instagram-embed-proxy.kuzablo422.workers.dev';
+const API_PUBLIC_URL = 'https://api.banjoboy420.ru';
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -329,7 +330,7 @@ app.get('/api/instagram-embed', async (req, res) => {
         data.media_type === 'video';
 
       return {
-        thumbnailUrl: data.thumbnail_url,
+        thumbnailUrl: `${API_PUBLIC_URL}/api/instagram-thumb?url=${encodeURIComponent(data.thumbnail_url)}`,
         title: data.title || null,
         authorName: data.author_name || null,
         isVideo,
@@ -360,6 +361,56 @@ app.get('/api/instagram-embed', async (req, res) => {
   log('info', `[IG] oEmbed ok for ${url}`);
   return res.json(payload);
 });
+
+// ===== INSTAGRAM THUMB PROXY =====
+function isValidInstagramThumbUrl(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return (
+      host === 'scontent.cdninstagram.com' ||
+      host.endsWith('.cdninstagram.com') ||
+      host.endsWith('.fbcdn.net')
+    );
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/instagram-thumb', async (req, res) => {
+  const url = String(req.query.url || '').trim();
+
+  if (!isValidInstagramThumbUrl(url)) {
+    return res.status(400).json({ error: 'Invalid thumbnail URL' });
+  }
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
+
+  try {
+    const workerUrl = `${IG_PROXY_URL}/?url=${encodeURIComponent(url)}`;
+    const resp = await fetch(workerUrl, { signal: ctrl.signal });
+    clearTimeout(t);
+
+    if (!resp.ok) {
+      log('warn', `[IG-THUMB] upstream HTTP ${resp.status} for ${url.slice(0, 80)}`);
+      return res.status(resp.status).end();
+    }
+
+    const ct = resp.headers.get('content-type') || 'image/jpeg';
+    const buf = Buffer.from(await resp.arrayBuffer());
+
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.end(buf);
+  } catch (err) {
+    clearTimeout(t);
+    log('warn', `[IG-THUMB] error: ${err.message}`);
+    res.status(502).end();
+  }
+});
+
 
 // ===== РЕГИСТРАЦИЯ =====
 app.post('/api/register', async (req, res) => {
