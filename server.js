@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.5';
+const VERSION = '2.22.6';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -330,7 +330,7 @@ app.get('/api/instagram-embed', async (req, res) => {
         data.media_type === 'video';
 
       return {
-        thumbnailUrl: `${API_PUBLIC_URL}/api/instagram-thumb?url=${encodeURIComponent(data.thumbnail_url)}`,
+        thumbnailUrl: `${API_PUBLIC_URL}/api/instagram-thumb?u=${b64urlEncode(data.thumbnail_url)}`,
         title: data.title || null,
         authorName: data.author_name || null,
         isVideo,
@@ -363,6 +363,17 @@ app.get('/api/instagram-embed', async (req, res) => {
 });
 
 // ===== INSTAGRAM THUMB PROXY =====
+function b64urlEncode(s) {
+  return Buffer.from(s, 'utf8').toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(s) {
+  const pad = 4 - (s.length % 4);
+  const padded = s + (pad < 4 ? '='.repeat(pad) : '');
+  return Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+}
+
 function isValidInstagramThumbUrl(url) {
   if (typeof url !== 'string') return false;
   try {
@@ -379,7 +390,12 @@ function isValidInstagramThumbUrl(url) {
 }
 
 app.get('/api/instagram-thumb', async (req, res) => {
-  const url = String(req.query.url || '').trim();
+  let url = '';
+  try {
+    url = b64urlDecode(String(req.query.u || '').trim());
+  } catch {
+    return res.status(400).json({ error: 'Invalid encoding' });
+  }
 
   if (!isValidInstagramThumbUrl(url)) {
     return res.status(400).json({ error: 'Invalid thumbnail URL' });
