@@ -30,7 +30,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.23.0';
+const VERSION = '2.23.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -38,7 +38,7 @@ const MAX_BIO_LENGTH = 200;
 const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
-const MAX_STICKER_MB = 2;
+const MAX_STICKER_MB = 10;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 
