@@ -22,7 +22,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.22.0';
+const VERSION = '2.22.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -34,7 +34,7 @@ const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
-const IG_FETCH_TIMEOUT_MS = 6000;
+const IG_FETCH_TIMEOUT_MS = 4000;
 
 const FRIEND_CD_MS_1 = 5 * 60 * 1000;
 const FRIEND_CD_MS_2 = 60 * 60 * 1000;
@@ -294,11 +294,10 @@ app.get('/api/instagram-embed', async (req, res) => {
     `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`,
   ];
 
-  for (const endpoint of endpoints) {
+  const fetchOne = async (endpoint) => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), IG_FETCH_TIMEOUT_MS);
-
       const resp = await fetch(endpoint, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; BanjoboyChat/1.0; +https://banjoboy420.ru)',
@@ -306,36 +305,42 @@ app.get('/api/instagram-embed', async (req, res) => {
         },
         signal: ctrl.signal,
       });
-
-      clearTimeout(t);
-
-      if (!resp.ok) continue;
-
+      if (!resp.ok) return null;
       const data = await resp.json();
-      if (!data || !data.thumbnail_url) continue;
+      if (!data || !data.thumbnail_url) return null;
 
       const isVideo =
         /\/(reel|reels|tv)\//.test(url) ||
         data.type === 'video' ||
         data.media_type === 'video';
 
-      const payload = {
+      return {
         thumbnailUrl: data.thumbnail_url,
         title: data.title || null,
         authorName: data.author_name || null,
         isVideo,
         url,
       };
-
-      igCache.set(url, { data: payload, expires: Date.now() + IG_CACHE_TTL_MS });
-      log('info', `[IG] oEmbed ok for ${url}`);
-      return res.json(payload);
     } catch (err) {
       log('warn', `Instagram oEmbed failed (${endpoint}):`, err.message);
+      return null;
+    } finally {
+      clearTimeout(t);
     }
+  };
+
+  const results = await Promise.allSettled(endpoints.map(fetchOne));
+  const payload = results
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value)[0];
+
+  if (!payload) {
+    return res.status(502).json({ error: 'Instagram oEmbed unavailable' });
   }
 
-  return res.status(502).json({ error: 'Instagram oEmbed unavailable' });
+  igCache.set(url, { data: payload, expires: Date.now() + IG_CACHE_TTL_MS });
+  log('info', `[IG] oEmbed ok for ${url}`);
+  return res.json(payload);
 });
 
 // ===== РЕГИСТРАЦИЯ =====
