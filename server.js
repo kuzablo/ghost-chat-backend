@@ -1429,7 +1429,9 @@ wss.on('connection', ws => {
           if (!stickerUrl) {
             pushBroadcast(current.userId, {
               title: current.nickname,
-              body: safeText ? safeText.slice(0, 120) : (imageUrl ? '📷 фото' : ''),
+              body: safeText
+                ? safeText.slice(0, 120)
+                : (imageUrl ? '📷 фото' : (voiceUrl ? '🎤 голосовое' : (stickerUrl ? '🎨 стикер' : ''))),
               url: '/',
               tag: `msg-${row.id}`,
             }).catch(err => log('warn', 'pushBroadcast error:', err.message));
@@ -1703,7 +1705,8 @@ wss.on('connection', ws => {
 
           const lastPreview = savedMessage.content
             || (savedMessage.sticker_url ? '🎨 стикер' : '')
-            || (savedMessage.image_url ? '📷 фото' : '');
+            || (savedMessage.image_url ? '📷 фото' : '')
+            || (savedMessage.voice_url ? '🎤 голосовое' : '');
 
           sendTo(ws, {
             type: 'dialog_update',
