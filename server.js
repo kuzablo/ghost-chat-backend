@@ -147,6 +147,58 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ===== ДИАГНОСТИКА С КЛИЕНТА =====
+// [2.26.2] Принимаем ошибки и метки этапов загрузки от клиента.
+// Цель: диагностировать зависание на Android Chrome, где нет DevTools.
+const clientErrorBuckets = new Map();
+const CLIENT_ERROR_WINDOW_MS = 60 * 1000;
+const CLIENT_ERROR_MAX = 30;
+
+function checkClientErrorRate(ip) {
+  const now = Date.now();
+  const stamps = (clientErrorBuckets.get(ip) || [])
+    .filter(t => now - t < CLIENT_ERROR_WINDOW_MS);
+  if (stamps.length >= CLIENT_ERROR_MAX) return false;
+  stamps.push(now);
+  clientErrorBuckets.set(ip, stamps);
+  return true;
+}
+
+app.post('/api/client-error', (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+    .toString().split(',')[0].trim();
+
+  if (!checkClientErrorRate(ip)) {
+    return res.status(429).json({ ok: false });
+  }
+
+  const {
+    stage = 'unknown',
+    message = '',
+    stack = '',
+    url = '',
+    ua = '',
+    ts = Date.now(),
+  } = req.body || {};
+
+  const safeMessage = String(message).slice(0, 500);
+  const safeStack = String(stack).slice(0, 1500);
+  const safeUrl = String(url).slice(0, 300);
+  const safeUa = String(ua).slice(0, 300);
+  const safeStage = String(stage).slice(0, 60);
+
+  log(
+    'warn',
+    `[CLIENT-ERROR] stage=${safeStage} ip=${ip} ts=${ts}\n` +
+    `  msg=${safeMessage}\n` +
+    `  url=${safeUrl}\n` +
+    `  ua=${safeUa}\n` +
+    `  stack=${safeStack}`
+  );
+
+  res.json({ ok: true });
+});
+
 const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
 };
