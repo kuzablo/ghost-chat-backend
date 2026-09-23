@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.24.0] Голосовые сообщения: /api/upload-voice, voice_* поля
 // [2.23.4] dialogs: lastFromMe + lastIsRead + dialog_read_update
 // [2.23.0] Стикеры: загрузка admin-only, панель, отправка в чат и личку
 // [2.22.6] IG oEmbed + thumb через base64url + Cloudflare Worker
@@ -31,7 +32,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.23.4';
+const VERSION = '2.24.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -40,6 +41,7 @@ const MAX_ROTATION_DEG = 15;
 const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
 const MAX_STICKER_MB = 10;
+const MAX_VOICE_MB = 20;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 
@@ -122,6 +124,17 @@ const uploadDialogsBg = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype || !file.mimetype.startsWith('image/')) {
       return cb(new Error('Only images allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+const uploadVoice = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_VOICE_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('audio/')) {
+      return cb(new Error('Only audio allowed'));
     }
     cb(null, true);
   },
@@ -365,6 +378,39 @@ app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, r
   } catch (err) {
     console.error('Ошибка загрузки фона диалогов:', err);
     res.status(500).json({ error: err.message || 'Dialogs bg upload failed' });
+  }
+});
+
+// ===== ЗАГРУЗКА ГОЛОСОВОГО =====
+app.post('/api/upload-voice', uploadVoice.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const file = req.file;
+  const fileExt = (file.originalname.split('.').pop() || 'webm').toLowerCase();
+  const fileName = `voice_${Date.now()}_${Math.random().toString(36).slice(2)}.${fileExt}`;
+  const filePath = `voice/${fileName}`;
+
+  try {
+    const { error } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '31536000',
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+
+    if (!urlData?.publicUrl) throw new Error('Public URL not generated');
+
+    res.json({ voiceUrl: urlData.publicUrl });
+  } catch (err) {
+    console.error('Ошибка загрузки голосового:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
 
@@ -841,6 +887,9 @@ const mapMessageRow = (row) => ({
   text: row.text || '',
   imageUrl: row.image_url || null,
   stickerUrl: row.sticker_url || null,
+  voiceUrl: row.voice_url || null,
+  voiceDuration: row.voice_duration != null ? Number(row.voice_duration) : null,
+  voiceWaveform: row.voice_waveform || null,
   time: Number(row.time),
   reactions: row.reactions || {},
   replyTo: row.reply_to || null,
@@ -883,13 +932,16 @@ async function getPrivateHistory(userId1, userId2) {
     is_read: msg.is_read || false,
     reactions: msg.reactions || {},
     forwardedFrom: msg.forwarded_from || null,
+    voiceUrl: msg.voice_url || null,
+    voiceDuration: msg.voice_duration != null ? Number(msg.voice_duration) : null,
+    voiceWaveform: msg.voice_waveform || null,
   }));
 }
 
 async function getDialogs(userId) {
   const { data: rows, error } = await supabaseAdmin
     .from('private_messages')
-    .select('sender_id, recipient_id, content, image_url, sticker_url, created_at, is_read')
+    .select('sender_id, recipient_id, content, image_url, sticker_url, voice_url, created_at, is_read')
     .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
@@ -904,7 +956,10 @@ async function getDialogs(userId) {
     if (!map[otherId]) {
       map[otherId] = {
         userId: otherId,
-        lastText: row.content || (row.sticker_url ? '🎨 стикер' : '') || (row.image_url ? '📷 фото' : ''),
+        lastText: row.content
+          || (row.sticker_url ? '🎨 стикер' : '')
+          || (row.image_url ? '📷 фото' : '')
+          || (row.voice_url ? '🎤 голосовое' : ''),
         lastAt: row.created_at,
         unread: 0,
         lastFromMe: row.sender_id === userId,
@@ -1296,7 +1351,7 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom } = msg.data;
+          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform } = msg.data;
 
           if (!checkRate(current.userId)) {
             sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
@@ -1331,6 +1386,23 @@ wss.on('connection', ws => {
             }
           }
 
+          let safeVoiceUrl = null;
+          let safeVoiceDuration = null;
+          let safeVoiceWaveform = null;
+          if (typeof voiceUrl === 'string' && voiceUrl.length > 0) {
+            safeVoiceUrl = voiceUrl.slice(0, 500);
+            safeVoiceDuration = Number.isFinite(voiceDuration)
+              ? Math.min(60, Math.max(0, Number(voiceDuration)))
+              : 0;
+            if (Array.isArray(voiceWaveform) && voiceWaveform.length > 0 && voiceWaveform.length <= 100) {
+              safeVoiceWaveform = voiceWaveform.map(v =>
+                Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
+              );
+            } else {
+              safeVoiceWaveform = Array(40).fill(0.3);
+            }
+          }
+
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             user_id: current.userId,
@@ -1342,6 +1414,9 @@ wss.on('connection', ws => {
             reactions: {},
             reply_to: replyTo || null,
             forwarded_from: safeForwardedFrom,
+            voice_url: safeVoiceUrl,
+            voice_duration: safeVoiceDuration,
+            voice_waveform: safeVoiceWaveform,
           };
 
           const { error } = await supabaseAdmin.from('messages').insert([row]);
@@ -1521,8 +1596,8 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom } = msg.data;
-          if (!recipientId || (!text && !imageUrl && !stickerUrl)) break;
+          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform } = msg.data;
+          if (!recipientId || (!text && !imageUrl && !stickerUrl && !voiceUrl)) break;
           if (recipientId === current.userId) break;
 
           if (await isBlockedEitherWay(current.userId, recipientId)) break;
@@ -1562,6 +1637,23 @@ wss.on('connection', ws => {
             }
           }
 
+          let safeVoiceUrl = null;
+          let safeVoiceDuration = null;
+          let safeVoiceWaveform = null;
+          if (typeof voiceUrl === 'string' && voiceUrl.length > 0) {
+            safeVoiceUrl = voiceUrl.slice(0, 500);
+            safeVoiceDuration = Number.isFinite(voiceDuration)
+              ? Math.min(60, Math.max(0, Number(voiceDuration)))
+              : 0;
+            if (Array.isArray(voiceWaveform) && voiceWaveform.length > 0 && voiceWaveform.length <= 100) {
+              safeVoiceWaveform = voiceWaveform.map(v =>
+                Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0
+              );
+            } else {
+              safeVoiceWaveform = Array(40).fill(0.3);
+            }
+          }
+
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
             .insert([{
@@ -1573,6 +1665,9 @@ wss.on('connection', ws => {
               is_read: false,
               reactions: {},
               forwarded_from: safeForwardedFrom,
+              voice_url: safeVoiceUrl,
+              voice_duration: safeVoiceDuration,
+              voice_waveform: safeVoiceWaveform,
             }])
             .select()
             .single();
@@ -1595,6 +1690,9 @@ wss.on('connection', ws => {
             is_read: false,
             reactions: savedMessage.reactions || {},
             forwardedFrom: savedMessage.forwarded_from || null,
+            voiceUrl: savedMessage.voice_url,
+            voiceDuration: savedMessage.voice_duration != null ? Number(savedMessage.voice_duration) : null,
+            voiceWaveform: savedMessage.voice_waveform || null,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
