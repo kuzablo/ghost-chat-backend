@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.25.0] private_delete_message / private_message_deleted
 // [2.24.0] Голосовые сообщения: /api/upload-voice, voice_* поля
 // [2.23.4] dialogs: lastFromMe + lastIsRead + dialog_read_update
 // [2.23.0] Стикеры: загрузка admin-only, панель, отправка в чат и личку
@@ -32,7 +33,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.24.0';
+const VERSION = '2.25.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -1857,6 +1858,52 @@ wss.on('connection', ws => {
             data: {
               messageId,
               reactions,
+              senderId: existing.sender_id,
+              recipientId: existing.recipient_id,
+            },
+          };
+
+          const senderWs = [...clients.entries()].find(([, c]) => c.userId === existing.sender_id)?.[0];
+          const recipientWs = [...clients.entries()].find(([, c]) => c.userId === existing.recipient_id)?.[0];
+
+          if (senderWs) sendTo(senderWs, payload);
+          if (recipientWs && recipientWs !== senderWs) sendTo(recipientWs, payload);
+
+          break;
+        }
+
+        case 'private_delete_message': {
+          const { messageId } = msg.data;
+          if (!messageId) break;
+
+          const { data: existing, error: fetchError } = await supabase
+            .from('private_messages')
+            .select('sender_id, recipient_id')
+            .eq('id', messageId)
+            .single();
+
+          if (fetchError || !existing) break;
+
+          // [2.25.0] удалять можно только свои
+          if (existing.sender_id !== current.userId) {
+            log('warn', `[PRIVATE] попытка удалить чужое в личке: ${current.nickname}`);
+            break;
+          }
+
+          const { error: deleteError } = await supabase
+            .from('private_messages')
+            .delete()
+            .eq('id', messageId);
+
+          if (deleteError) {
+            log('error', 'Ошибка удаления в личке:', deleteError.message);
+            break;
+          }
+
+          const payload = {
+            type: 'private_message_deleted',
+            data: {
+              messageId,
               senderId: existing.sender_id,
               recipientId: existing.recipient_id,
             },
