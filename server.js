@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.26.3] CORS: явный origin + credentials (фикс /api/client-error)
 // [2.26.1] Параллелизация auth-flow — Promise.all вместо 9 последовательных await
 // [2.26.0] Глобальный фон чата: app_settings, global_dialogs_bg
 // [2.25.0] private_delete_message / private_message_deleted
@@ -35,7 +36,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.26.1';
+const VERSION = '2.26.3';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -144,7 +145,26 @@ const uploadVoice = multer({
 });
 
 const app = express();
-app.use(cors());
+
+// [2.26.3] CORS: явный список origin + credentials.
+// Было: дефолтный cors() → Access-Control-Allow-Origin: *.
+// Это ломает sendBeacon и fetch с credentials:'include' — используется
+// в /api/client-error для диагностики с клиента. Плюс правильнее
+// вообще не пускать чужие origin с credentials.
+const ALLOWED_ORIGINS = [
+  'https://banjoboy420.ru',
+  'https://www.banjoboy420.ru',
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    // Разрешаем запросы без Origin (curl, мониторинг, same-origin)
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(null, false);
+  },
+  credentials: true,
+}));
+
 app.use(express.json());
 
 // ===== ДИАГНОСТИКА С КЛИЕНТА =====
