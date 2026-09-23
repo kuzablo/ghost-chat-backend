@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.26.0] Глобальный фон чата: app_settings, global_dialogs_bg
 // [2.25.0] private_delete_message / private_message_deleted
 // [2.24.0] Голосовые сообщения: /api/upload-voice, voice_* поля
 // [2.23.4] dialogs: lastFromMe + lastIsRead + dialog_read_update
@@ -33,7 +34,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.25.0';
+const VERSION = '2.26.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -1133,6 +1134,30 @@ async function getFriendsList(userId) {
   }));
 }
 
+async function getAppSetting(key) {
+  const { data, error } = await supabaseAdmin
+    .from('app_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle();
+  if (error) {
+    log('error', `[SETTINGS] read ${key}:`, error.message);
+    return null;
+  }
+  return data?.value || null;
+}
+
+async function setAppSetting(key, value) {
+  const { error } = await supabaseAdmin
+    .from('app_settings')
+    .upsert([{ key, value }], { onConflict: 'key' });
+  if (error) {
+    log('error', `[SETTINGS] write ${key}:`, error.message);
+    return false;
+  }
+  return true;
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ws, client] of clients.entries()) {
@@ -1226,6 +1251,8 @@ wss.on('connection', ws => {
         const admin = await getAdmin();
 
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
+        const globalDialogsBg = await getAppSetting('global_dialogs_bg');
+
         ws.send(JSON.stringify({
           type: 'auth_ok',
           data: {
@@ -1236,6 +1263,7 @@ wss.on('connection', ws => {
             adminUserId: admin?.userId || null,
             adminNickname: admin?.nickname || null,
             dialogsBg: current.dialogsBg,
+            globalDialogsBg,
           }
         }));
 
@@ -1592,6 +1620,36 @@ wss.on('connection', ws => {
           current.dialogsBg = nextBg;
           sendTo(ws, {
             type: 'dialogs_bg_updated',
+            data: { bg: nextBg },
+          });
+          break;
+        }
+        
+        // ===== АДМИН: ГЛОБАЛЬНЫЙ ФОН =====
+        case 'admin_set_global_bg': {
+          if (!isAdmin(current)) break;
+
+          const { bg } = msg.data || {};
+
+          let nextBg = null;
+          if (typeof bg === 'string') {
+            const trimmed = bg.trim();
+            if (trimmed.length > 0 && trimmed.length <= MAX_DIALOGS_BG_LENGTH) {
+              if (trimmed.startsWith('preset:') || trimmed.startsWith('url:')) {
+                nextBg = trimmed;
+              }
+            }
+          }
+
+          const ok = await setAppSetting('global_dialogs_bg', nextBg);
+          if (!ok) {
+            sendTo(ws, { type: 'admin_error', data: { message: 'Не удалось сохранить фон' } });
+            break;
+          }
+
+          log('info', `[SETTINGS] ${current.nickname} установил глобальный фон: ${nextBg || 'сброшен'}`);
+          broadcast({
+            type: 'global_bg_updated',
             data: { bg: nextBg },
           });
           break;
