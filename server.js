@@ -12,31 +12,17 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
-// [2.26.3] CORS: явный origin + credentials (фикс /api/client-error)
-// [2.26.1] Параллелизация auth-flow — Promise.all вместо 9 последовательных await
-// [2.26.0] Глобальный фон чата: app_settings, global_dialogs_bg
-// [2.25.0] private_delete_message / private_message_deleted
-// [2.24.0] Голосовые сообщения: /api/upload-voice, voice_* поля
-// [2.23.4] dialogs: lastFromMe + lastIsRead + dialog_read_update
-// [2.23.0] Стикеры: загрузка admin-only, панель, отправка в чат и личку
-// [2.22.6] IG oEmbed + thumb через base64url + Cloudflare Worker
-// [2.22.4] Instagram oEmbed через Cloudflare Worker
-// [2.22.3] ipv4first + err.cause в логах IG
-// [2.22.2] браузерный UA для IG (отменено в 2.22.4)
-// [2.22.1] IG oEmbed: параллельные запросы, таймаут 4с
-// [2.22.0] Instagram oEmbed: endpoint /api/instagram-embed + кэш
-// [2.21.10] dialogs_bg
-// [2.21.9] getDialogs отдаёт avatarUrl
-// [2.21.8] чистка pending friend_requests
-// [2.21.7] fix pendingRequests senderNickname
-// [2.21.6] avatars_map; лимит аватарки 25 МБ
-// [2.21.5] блокировки: blocks, фильтр players, block_user/unblock_user
-// [2.21.4] прогрессивный кулдаун на friend_request
-// [2.21.3] лимит загрузки 10 → 25 МБ
-// [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
-// [2.21.1] список забаненных навсегда
-// [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.26.4';
+// [2.27.0] Избранные стикеры: favorite_stickers JSONB у users,
+//          WS toggle_favorite_sticker, отдаём в auth_ok.
+// [2.26.4] ver в client-error
+// [2.26.3] CORS: явный origin + credentials
+// [2.26.1] Параллелизация auth-flow
+// [2.26.0] Глобальный фон чата
+// [2.25.0] private_delete_message
+// [2.24.0] Голосовые
+// [2.23.4] dialogs: lastFromMe + lastIsRead
+// [2.23.0] Стикеры
+const VERSION = '2.27.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -48,6 +34,7 @@ const MAX_STICKER_MB = 10;
 const MAX_VOICE_MB = 20;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
+const MAX_FAVORITE_STICKERS = 60;
 
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
 const IG_FETCH_TIMEOUT_MS = 7000;
@@ -146,18 +133,12 @@ const uploadVoice = multer({
 
 const app = express();
 
-// [2.26.3] CORS: явный список origin + credentials.
-// Было: дефолтный cors() → Access-Control-Allow-Origin: *.
-// Это ломает sendBeacon и fetch с credentials:'include' — используется
-// в /api/client-error для диагностики с клиента. Плюс правильнее
-// вообще не пускать чужие origin с credentials.
 const ALLOWED_ORIGINS = [
   'https://banjoboy420.ru',
   'https://www.banjoboy420.ru',
 ];
 app.use(cors({
   origin: (origin, cb) => {
-    // Разрешаем запросы без Origin (curl, мониторинг, same-origin)
     if (!origin) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     return cb(null, false);
@@ -167,9 +148,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// ===== ДИАГНОСТИКА С КЛИЕНТА =====
-// [2.26.2] Принимаем ошибки и метки этапов загрузки от клиента.
-// Цель: диагностировать зависание на Android Chrome, где нет DevTools.
 const clientErrorBuckets = new Map();
 const CLIENT_ERROR_WINDOW_MS = 60 * 1000;
 const CLIENT_ERROR_MAX = 30;
@@ -338,7 +316,6 @@ app.post('/api/upload-sticker', uploadSticker.single('file'), async (req, res) =
     return res.status(401).json({ error: 'Invalid token' });
   }
 
-  // JWT не expiring — проверяем роль по БД
   const { data: dbUser } = await supabaseAdmin
     .from('users')
     .select('role')
@@ -677,6 +654,7 @@ app.post('/api/register', async (req, res) => {
       role: 'user',
       banned_forever: false,
       friend_request_cooldowns: {},
+      favorite_stickers: [],
     }])
     .select()
     .single();
@@ -1285,10 +1263,6 @@ wss.on('connection', ws => {
       try {
         const decoded = jwt.verify(msg.token, JWT_SECRET);
 
-        // [2.26.1] Параллельный сбор всех данных, необходимых при auth.
-        // Все запросы read-only и независимы. Promise.all вместо 9
-        // последовательных await — экономия 1.5–2.5с на слабых сетях
-        // (особенно чувствительно для Android).
         const [
           dbUserResult,
           admin,
@@ -1302,7 +1276,7 @@ wss.on('connection', ws => {
         ] = await Promise.all([
           supabase
             .from('users')
-            .select('banned_forever, role, wins, losses, avatar_url, dialogs_bg')
+            .select('banned_forever, role, wins, losses, avatar_url, dialogs_bg, favorite_stickers')
             .eq('id', decoded.userId)
             .single(),
           getAdmin(),
@@ -1336,6 +1310,10 @@ wss.on('connection', ws => {
         current.dialogsBg = dbUser.dialogs_bg || null;
         current.lastActivity = Date.now();
 
+        const favoriteStickers = Array.isArray(dbUser.favorite_stickers)
+          ? dbUser.favorite_stickers
+          : [];
+
         const duplicateEntries = [...clients.entries()].filter(([sock, c]) => {
           return sock !== ws && c.userId === current.userId;
         });
@@ -1348,7 +1326,6 @@ wss.on('connection', ws => {
 
         clearTimeout(authTimeout);
 
-        // Отправка клиенту — строго в том же порядке, что и раньше.
         ws.send(JSON.stringify({ type: 'version', data: VERSION }));
 
         ws.send(JSON.stringify({
@@ -1362,6 +1339,7 @@ wss.on('connection', ws => {
             adminNickname: admin?.nickname || null,
             dialogsBg: current.dialogsBg,
             globalDialogsBg,
+            favoriteStickers,
           }
         }));
 
@@ -1463,7 +1441,8 @@ wss.on('connection', ws => {
         msg.type !== 'profile_get' &&
         msg.type !== 'block_user' &&
         msg.type !== 'unblock_user' &&
-        msg.type !== 'dialogs_bg_update') {
+        msg.type !== 'dialogs_bg_update' &&
+        msg.type !== 'toggle_favorite_sticker') {
       sendTo(ws, { type: 'banned', data: { until: current.bannedUntil } });
       return;
     }
@@ -1489,8 +1468,6 @@ wss.on('connection', ws => {
             safeText = safeText.slice(0, MAX_TEXT_LENGTH);
           }
 
-          // [2.23.3] Валидация метки «Переслано от».
-          // Автор — всегда первоисточник. Пересылаем пересланное — метка копируется как есть.
           let safeForwardedFrom = null;
           if (forwardedFrom && typeof forwardedFrom === 'object') {
             const fn = typeof forwardedFrom.nickname === 'string'
@@ -1681,6 +1658,68 @@ wss.on('connection', ws => {
           break;
         }
 
+        // ===== ИЗБРАННЫЕ СТИКЕРЫ =====
+        case 'toggle_favorite_sticker': {
+          const { stickerUrl } = msg.data || {};
+          if (!stickerUrl || typeof stickerUrl !== 'string') break;
+
+          if (!(await isValidStickerUrl(stickerUrl))) {
+            log('warn', `[FAV] попытка использовать несуществующий стикер: ${current.nickname}`);
+            break;
+          }
+
+          const { data: userRow, error: fetchErr } = await supabaseAdmin
+            .from('users')
+            .select('favorite_stickers')
+            .eq('id', current.userId)
+            .single();
+
+          if (fetchErr) {
+            log('error', '[FAV] fetch error:', fetchErr.message);
+            break;
+          }
+
+          const list = Array.isArray(userRow?.favorite_stickers)
+            ? userRow.favorite_stickers.filter(u => typeof u === 'string')
+            : [];
+
+          let next;
+          let action;
+          if (list.includes(stickerUrl)) {
+            next = list.filter(u => u !== stickerUrl);
+            action = 'removed';
+          } else {
+            if (list.length >= MAX_FAVORITE_STICKERS) {
+              sendTo(ws, {
+                type: 'admin_error',
+                data: { message: `Не больше ${MAX_FAVORITE_STICKERS} избранных` },
+              });
+              break;
+            }
+            // [2.27.0] Новые добавленные — первыми.
+            next = [stickerUrl, ...list];
+            action = 'added';
+          }
+
+          const { error: saveErr } = await supabaseAdmin
+            .from('users')
+            .update({ favorite_stickers: next })
+            .eq('id', current.userId);
+
+          if (saveErr) {
+            log('error', '[FAV] save error:', saveErr.message);
+            break;
+          }
+
+          sendTo(ws, {
+            type: 'favorite_stickers_updated',
+            data: { favoriteStickers: next, action, stickerUrl },
+          });
+
+          log('info', `[FAV] ${current.nickname} ${action} ${stickerUrl.slice(-20)}`);
+          break;
+        }
+
         // ===== ФОН ДИАЛОГОВ =====
         case 'dialogs_bg_update': {
           const { bg } = msg.data || {};
@@ -1716,7 +1755,7 @@ wss.on('connection', ws => {
           });
           break;
         }
-        
+
         // ===== АДМИН: ГЛОБАЛЬНЫЙ ФОН =====
         case 'admin_set_global_bg': {
           if (!isAdmin(current)) break;
@@ -1773,7 +1812,6 @@ wss.on('connection', ws => {
 
           const recipientWs = [...clients.entries()].find(([, c]) => c.userId === recipientId)?.[0];
 
-          // [2.23.3] Валидация метки «Переслано от»
           let safeForwardedFrom = null;
           if (forwardedFrom && typeof forwardedFrom === 'object') {
             const fn = typeof forwardedFrom.nickname === 'string'
@@ -1927,7 +1965,6 @@ wss.on('connection', ws => {
 
             if (senderWs) {
               sendTo(senderWs, { type: 'message_read', data: readData });
-              // [2.23.4] сообщаем отправителю: его сообщение прочитано — точка в диалогах гаснет
               sendTo(senderWs, {
                 type: 'dialog_read_update',
                 data: { userId: current.userId },
@@ -2034,7 +2071,6 @@ wss.on('connection', ws => {
 
           if (fetchError || !existing) break;
 
-          // [2.25.0] удалять можно только свои
           if (existing.sender_id !== current.userId) {
             log('warn', `[PRIVATE] попытка удалить чужое в личке: ${current.nickname}`);
             break;
