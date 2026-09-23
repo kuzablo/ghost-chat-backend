@@ -36,7 +36,7 @@ const webpush = require('web-push');
 // [2.21.2] friend_request_sent / new_friend_request / friend_request_declined
 // [2.21.1] список забаненных навсегда
 // [2.21.0] players и friends отдают avatarUrl
-const VERSION = '2.26.3';
+const VERSION = '2.26.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -198,6 +198,7 @@ app.post('/api/client-error', (req, res) => {
     stack = '',
     url = '',
     ua = '',
+    ver = 'unknown',
     ts = Date.now(),
   } = req.body || {};
 
@@ -209,7 +210,7 @@ app.post('/api/client-error', (req, res) => {
 
   log(
     'warn',
-    `[CLIENT-ERROR] stage=${safeStage} ip=${ip} ts=${ts}\n` +
+    `[CLIENT-ERROR] stage=${safeStage} ver=${ver} ip=${ip} ts=${ts}\n` +
     `  msg=${safeMessage}\n` +
     `  url=${safeUrl}\n` +
     `  ua=${safeUa}\n` +
