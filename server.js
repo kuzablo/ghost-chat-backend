@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.1';
+const VERSION = '2.28.2';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -42,6 +42,7 @@ const MAX_VIDEO_MB = 100;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 const MAX_FAVORITE_STICKERS = 60;
+const MAX_STORAGE_ITEMS = 500;
 
 const IG_CACHE_TTL_MS = 60 * 60 * 1000;
 const IG_FETCH_TIMEOUT_MS = 7000;
@@ -1274,6 +1275,28 @@ async function buildProfile(userId, currentUserId) {
   };
 }
 
+async function loadStorage(userId) {
+  const { data, error } = await supabaseAdmin
+    .from('storage_items')
+    .select('id, type, payload, source, saved_at, sort_order')
+    .eq('user_id', userId)
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    log('error', 'Ошибка загрузки хранилища:', error.message);
+    return [];
+  }
+  return (data || []).map(r => ({
+    id: r.id,
+    type: r.type,
+    payload: r.payload,
+    source: r.source,
+    savedAt: r.saved_at,
+    sortOrder: r.sort_order,
+  }));
+}
+
+
 async function getFriendsList(userId) {
   const { data: friendIds } = await supabaseAdmin
     .from('friends')
@@ -1473,6 +1496,9 @@ wss.on('connection', ws => {
         }));
 
         ws.send(JSON.stringify({ type: 'history', data: history }));
+
+        const storage = await loadStorage(current.userId);
+        ws.send(JSON.stringify({ type: 'storage_list', data: storage }));
 
         ws.send(JSON.stringify({ type: 'dialogs_list', data: dialogs }));
 
@@ -2850,6 +2876,129 @@ wss.on('connection', ws => {
         case 'get_friends': {
           const list = await getFriendsList(current.userId);
           sendTo(ws, { type: 'friends_list', data: list });
+          break;
+        }
+
+        // ===== ХРАНИЛИЩЕ =====
+        case 'storage_save': {
+          const { type, payload, source } = msg.data || {};
+          if (!type || !payload) break;
+          if (!['text','image','sticker','voice','video'].includes(type)) break;
+
+          const sourceMsgId = source?.messageId || null;
+
+          // Дубликат по messageId
+          if (sourceMsgId) {
+            const { data: dup } = await supabaseAdmin
+              .from('storage_items')
+              .select('id')
+              .eq('user_id', current.userId)
+              .eq('source->>messageId', sourceMsgId)
+              .maybeSingle();
+            if (dup) {
+              sendTo(ws, { type: 'storage_error', data: { message: 'Уже в хранилище' } });
+              break;
+            }
+          }
+
+          // Лимит
+          const { count } = await supabaseAdmin
+            .from('storage_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', current.userId);
+          if ((count || 0) >= MAX_STORAGE_ITEMS) {
+            sendTo(ws, { type: 'storage_error', data: { message: 'Хранилище переполнено' } });
+            break;
+          }
+
+          const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          const sortOrder = Date.now();
+
+          const { data: row, error } = await supabaseAdmin
+            .from('storage_items')
+            .insert([{
+              id,
+              user_id: current.userId,
+              type,
+              payload,
+              source: source || null,
+              sort_order: sortOrder,
+            }])
+            .select()
+            .single();
+
+          if (error) {
+            log('error', 'Ошибка сохранения в хранилище:', error.message);
+            sendTo(ws, { type: 'storage_error', data: { message: 'Не удалось сохранить' } });
+            break;
+          }
+
+          sendTo(ws, {
+            type: 'storage_saved',
+            data: {
+              id: row.id,
+              type: row.type,
+              payload: row.payload,
+              source: row.source,
+              savedAt: row.saved_at,
+              sortOrder: row.sort_order,
+            },
+          });
+
+          log('info', `[STORAGE] ${current.nickname} сохранил ${type}`);
+          break;
+        }
+
+        case 'storage_delete': {
+          const { id } = msg.data || {};
+          if (!id) break;
+
+          const { error } = await supabaseAdmin
+            .from('storage_items')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', current.userId);
+
+          if (error) {
+            log('error', 'Ошибка удаления из хранилища:', error.message);
+            break;
+          }
+
+          sendTo(ws, { type: 'storage_deleted', data: { id } });
+          break;
+        }
+
+        case 'storage_reorder': {
+          const { ids } = msg.data || {};
+          if (!Array.isArray(ids) || ids.length === 0) break;
+
+          // ids — массив id в новом порядке. Меняем sort_order по индексу.
+          const updates = ids.map((itemId, idx) => ({
+            id: itemId,
+            user_id: current.userId,
+            sort_order: idx,
+          }));
+
+          // Тихо: только те, что реально наши
+          const { data: owned } = await supabaseAdmin
+            .from('storage_items')
+            .select('id')
+            .eq('user_id', current.userId)
+            .in('id', ids);
+          const ownedSet = new Set((owned || []).map(r => r.id));
+
+          const filtered = updates.filter(u => ownedSet.has(u.id));
+          if (filtered.length === 0) break;
+
+          for (const u of filtered) {
+            await supabaseAdmin
+              .from('storage_items')
+              .update({ sort_order: u.sort_order })
+              .eq('id', u.id)
+              .eq('user_id', current.userId);
+          }
+
+          sendTo(ws, { type: 'storage_reordered', data: { ids: filtered.map(f => f.id) } });
           break;
         }
       }
