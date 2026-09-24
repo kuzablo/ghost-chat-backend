@@ -12,6 +12,8 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.28.0] Видео-сообщения (кружки): video_url, video_duration, video_mime
+//          в messages и private_messages. Upload 100 МБ.
 // [2.27.0] Избранные стикеры: favorite_stickers JSONB у users,
 //          WS toggle_favorite_sticker, отдаём в auth_ok.
 // [2.26.4] ver в client-error
@@ -22,7 +24,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.27.0';
+const VERSION = '2.28.0';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -32,6 +34,7 @@ const MAX_UPLOAD_MB = 25;
 const MAX_AVATAR_MB = 25;
 const MAX_STICKER_MB = 10;
 const MAX_VOICE_MB = 20;
+const MAX_VIDEO_MB = 100;
 const MAX_DIALOGS_BG_MB = 15;
 const MAX_DIALOGS_BG_LENGTH = 500;
 const MAX_FAVORITE_STICKERS = 60;
@@ -126,6 +129,17 @@ const uploadVoice = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype || !file.mimetype.startsWith('audio/')) {
       return cb(new Error('Only audio allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+const uploadVideo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('video/')) {
+      return cb(new Error('Only video allowed'));
     }
     cb(null, true);
   },
@@ -463,6 +477,40 @@ app.post('/api/upload-voice', uploadVoice.single('file'), async (req, res) => {
     res.json({ voiceUrl: urlData.publicUrl });
   } catch (err) {
     console.error('Ошибка загрузки голосового:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// ===== ЗАГРУЗКА ВИДЕО (кружки) =====
+app.post('/api/upload-video', uploadVideo.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const file = req.file;
+  const fileExt = (file.originalname.split('.').pop() || 'webm').toLowerCase();
+  const fileName = `video_${Date.now()}_${Math.random().toString(36).slice(2)}.${fileExt}`;
+  const filePath = `video/${fileName}`;
+
+  try {
+    const { error } = await supabaseAdmin.storage
+      .from('chat-images')
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '31536000',
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from('chat-images')
+      .getPublicUrl(filePath);
+
+    if (!urlData?.publicUrl) throw new Error('Public URL not generated');
+
+    log('info', `[VIDEO] uploaded ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} МБ)`);
+    res.json({ videoUrl: urlData.publicUrl });
+  } catch (err) {
+    console.error('Ошибка загрузки видео:', err);
     res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
@@ -944,6 +992,9 @@ const mapMessageRow = (row) => ({
   voiceUrl: row.voice_url || null,
   voiceDuration: row.voice_duration != null ? Number(row.voice_duration) : null,
   voiceWaveform: row.voice_waveform || null,
+  videoUrl: row.video_url || null,
+  videoDuration: row.video_duration != null ? Number(row.video_duration) : null,
+  videoMime: row.video_mime || null,
   time: Number(row.time),
   reactions: row.reactions || {},
   replyTo: row.reply_to || null,
@@ -989,13 +1040,16 @@ async function getPrivateHistory(userId1, userId2) {
     voiceUrl: msg.voice_url || null,
     voiceDuration: msg.voice_duration != null ? Number(msg.voice_duration) : null,
     voiceWaveform: msg.voice_waveform || null,
+    videoUrl: msg.video_url || null,
+    videoDuration: msg.video_duration != null ? Number(msg.video_duration) : null,
+    videoMime: msg.video_mime || null,
   }));
 }
 
 async function getDialogs(userId) {
   const { data: rows, error } = await supabaseAdmin
     .from('private_messages')
-    .select('sender_id, recipient_id, content, image_url, sticker_url, voice_url, created_at, is_read')
+    .select('sender_id, recipient_id, content, image_url, sticker_url, voice_url, video_url, created_at, is_read')
     .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
@@ -1013,7 +1067,8 @@ async function getDialogs(userId) {
         lastText: row.content
           || (row.sticker_url ? '🎨 стикер' : '')
           || (row.image_url ? '📷 фото' : '')
-          || (row.voice_url ? '🎤 голосовое' : ''),
+          || (row.voice_url ? '🎤 голосовое' : '')
+          || (row.video_url ? '📹 видео' : ''),
         lastAt: row.created_at,
         unread: 0,
         lastFromMe: row.sender_id === userId,
@@ -1451,7 +1506,7 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform } = msg.data;
+          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime } = msg.data;
 
           if (!checkRate(current.userId)) {
             sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
@@ -1501,6 +1556,19 @@ wss.on('connection', ws => {
             }
           }
 
+          let safeVideoUrl = null;
+          let safeVideoDuration = null;
+          let safeVideoMime = null;
+          if (typeof videoUrl === 'string' && videoUrl.length > 0) {
+            safeVideoUrl = videoUrl.slice(0, 500);
+            safeVideoDuration = Number.isFinite(videoDuration)
+              ? Math.min(60, Math.max(0, Number(videoDuration)))
+              : 0;
+            if (typeof videoMime === 'string' && videoMime.length > 0 && videoMime.length <= 60) {
+              safeVideoMime = videoMime;
+            }
+          }
+
           const row = {
             id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
             user_id: current.userId,
@@ -1515,6 +1583,9 @@ wss.on('connection', ws => {
             voice_url: safeVoiceUrl,
             voice_duration: safeVoiceDuration,
             voice_waveform: safeVoiceWaveform,
+            video_url: safeVideoUrl,
+            video_duration: safeVideoDuration,
+            video_mime: safeVideoMime,
           };
 
           const { error } = await supabaseAdmin.from('messages').insert([row]);
@@ -1529,7 +1600,10 @@ wss.on('connection', ws => {
               title: current.nickname,
               body: safeText
                 ? safeText.slice(0, 120)
-                : (imageUrl ? '📷 фото' : (voiceUrl ? '🎤 голосовое' : (stickerUrl ? '🎨 стикер' : ''))),
+                : (imageUrl ? '📷 фото'
+                  : voiceUrl ? '🎤 голосовое'
+                  : videoUrl ? '📹 видео'
+                  : stickerUrl ? '🎨 стикер' : ''),
               url: '/',
               tag: `msg-${row.id}`,
             }).catch(err => log('warn', 'pushBroadcast error:', err.message));
@@ -1788,8 +1862,8 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform } = msg.data;
-          if (!recipientId || (!text && !imageUrl && !stickerUrl && !voiceUrl)) break;
+          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime } = msg.data;
+          if (!recipientId || (!text && !imageUrl && !stickerUrl && !voiceUrl && !videoUrl)) break;
           if (recipientId === current.userId) break;
 
           if (await isBlockedEitherWay(current.userId, recipientId)) break;
@@ -1845,6 +1919,19 @@ wss.on('connection', ws => {
             }
           }
 
+          let safeVideoUrl = null;
+          let safeVideoDuration = null;
+          let safeVideoMime = null;
+          if (typeof videoUrl === 'string' && videoUrl.length > 0) {
+            safeVideoUrl = videoUrl.slice(0, 500);
+            safeVideoDuration = Number.isFinite(videoDuration)
+              ? Math.min(60, Math.max(0, Number(videoDuration)))
+              : 0;
+            if (typeof videoMime === 'string' && videoMime.length > 0 && videoMime.length <= 60) {
+              safeVideoMime = videoMime;
+            }
+          }
+
           const { data: savedMessage, error } = await supabase
             .from('private_messages')
             .insert([{
@@ -1859,6 +1946,9 @@ wss.on('connection', ws => {
               voice_url: safeVoiceUrl,
               voice_duration: safeVoiceDuration,
               voice_waveform: safeVoiceWaveform,
+              video_url: safeVideoUrl,
+              video_duration: safeVideoDuration,
+              video_mime: safeVideoMime,
             }])
             .select()
             .single();
@@ -1884,6 +1974,9 @@ wss.on('connection', ws => {
             voiceUrl: savedMessage.voice_url,
             voiceDuration: savedMessage.voice_duration != null ? Number(savedMessage.voice_duration) : null,
             voiceWaveform: savedMessage.voice_waveform || null,
+            videoUrl: savedMessage.video_url,
+            videoDuration: savedMessage.video_duration != null ? Number(savedMessage.video_duration) : null,
+            videoMime: savedMessage.video_mime || null,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
@@ -1895,7 +1988,8 @@ wss.on('connection', ws => {
           const lastPreview = savedMessage.content
             || (savedMessage.sticker_url ? '🎨 стикер' : '')
             || (savedMessage.image_url ? '📷 фото' : '')
-            || (savedMessage.voice_url ? '🎤 голосовое' : '');
+            || (savedMessage.voice_url ? '🎤 голосовое' : '')
+            || (savedMessage.video_url ? '📹 видео' : '');
 
           sendTo(ws, {
             type: 'dialog_update',
