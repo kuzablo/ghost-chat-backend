@@ -12,6 +12,10 @@ const WebSocket = require('ws');
 const multer = require('multer');
 const webpush = require('web-push');
 
+// [2.28.1] Retry для upload в Supabase Storage — 3 попытки с backoff.
+//          Класс багов: ECONNRESET между Amvera и Supabase, «fetch failed»
+//          в StorageUnknownError. Транзиентные — лечим retry, логические
+//          (конфликт, неверный bucket) — не retry'им.
 // [2.28.0] Видео-сообщения (кружки): video_url, video_duration, video_mime
 //          в messages и private_messages. Upload 100 МБ.
 // [2.27.0] Избранные стикеры: favorite_stickers JSONB у users,
@@ -24,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.0';
+const VERSION = '2.28.1';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -216,6 +220,68 @@ const log = (level, ...args) => {
   console[level](`[CHAT v${VERSION}]`, ...args);
 };
 
+// ===== [2.28.1] RETRY UPLOAD =====
+// Обёртка вокруг supabaseAdmin.storage.from(bucket).upload(...) с retry.
+// Retry только на транзиентные сетевые ошибки. Логические (конфликт,
+// неверный bucket) — сразу наружу.
+const UPLOAD_MAX_ATTEMPTS = 3;
+const UPLOAD_BACKOFF_BASE_MS = 500;
+
+function isTransientUploadError(error) {
+  if (!error) return false;
+  const name = error.name || '';
+  const msg = String(error.message || error.error || error);
+  const cause = error.originalError?.message || error.cause?.message || '';
+
+  if (name === 'StorageUnknownError') return true;
+  if (error.originalError?.name === 'TypeError') return true;
+
+  const haystack = `${msg} ${cause}`;
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|aborted|timeout/i
+    .test(haystack);
+}
+
+async function uploadWithRetry(bucket, path, buffer, options = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+    const { data, error } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(path, buffer, options);
+
+    if (!error) {
+      if (attempt > 1) {
+        log('info', `[UPLOAD] ${bucket}/${path} — успех с попытки ${attempt}`);
+      }
+      return { data, error: null };
+    }
+
+    lastError = error;
+    const transient = isTransientUploadError(error);
+
+    if (!transient || attempt === UPLOAD_MAX_ATTEMPTS) {
+      log(
+        'warn',
+        `[UPLOAD] ${bucket}/${path} — сдаёмся на попытке ${attempt}/${UPLOAD_MAX_ATTEMPTS}. ` +
+        `transient=${transient} msg=${error.message || error}`
+      );
+      return { data: null, error };
+    }
+
+    const delay = UPLOAD_BACKOFF_BASE_MS * attempt;
+    log(
+      'warn',
+      `[UPLOAD] ${bucket}/${path} — попытка ${attempt}/${UPLOAD_MAX_ATTEMPTS} упала: ` +
+      `${error.message || error}. Повтор через ${delay}мс`
+    );
+
+    await new Promise(r => setTimeout(r, delay));
+  }
+
+  return { data: null, error: lastError };
+}
+// ===== /RETRY UPLOAD =====
+
 // ===== ЗАГРУЗКА ФАЙЛОВ =====
 app.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
@@ -228,13 +294,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   const filePath = `public/${fileName}`;
 
   try {
-    const { data, error } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '3600',
-        upsert: false,
-      });
+    const { error } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: file.mimetype,
+      cacheControl: '3600',
+      upsert: false,
+    });
 
     if (error) {
       console.error('❌ Upload error:', error);
@@ -282,13 +346,11 @@ app.post('/api/upload-avatar', uploadAvatar.single('file'), async (req, res) => 
   const filePath = `avatars/${fileName}`;
 
   try {
-    const { error } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '3600',
-        upsert: false,
-      });
+    const { error } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: file.mimetype,
+      cacheControl: '3600',
+      upsert: false,
+    });
 
     if (error) {
       console.error('❌ Avatar upload error:', error);
@@ -346,13 +408,11 @@ app.post('/api/upload-sticker', uploadSticker.single('file'), async (req, res) =
   const filePath = `stickers/${fileName}`;
 
   try {
-    const { error: uploadErr } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: 'image/gif',
-        cacheControl: '31536000',
-        upsert: false,
-      });
+    const { error: uploadErr } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: 'image/gif',
+      cacheControl: '31536000',
+      upsert: false,
+    });
 
     if (uploadErr) {
       console.error('❌ Sticker upload error:', uploadErr);
@@ -418,13 +478,11 @@ app.post('/api/upload-dialogs-bg', uploadDialogsBg.single('file'), async (req, r
   const filePath = `dialogs-bg/${fileName}`;
 
   try {
-    const { error } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '3600',
-        upsert: false,
-      });
+    const { error } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: file.mimetype,
+      cacheControl: '3600',
+      upsert: false,
+    });
 
     if (error) {
       console.error('❌ Dialogs bg upload error:', error);
@@ -458,13 +516,11 @@ app.post('/api/upload-voice', uploadVoice.single('file'), async (req, res) => {
   const filePath = `voice/${fileName}`;
 
   try {
-    const { error } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '31536000',
-        upsert: false,
-      });
+    const { error } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: file.mimetype,
+      cacheControl: '31536000',
+      upsert: false,
+    });
 
     if (error) throw error;
 
@@ -491,13 +547,11 @@ app.post('/api/upload-video', uploadVideo.single('file'), async (req, res) => {
   const filePath = `video/${fileName}`;
 
   try {
-    const { error } = await supabaseAdmin.storage
-      .from('chat-images')
-      .upload(filePath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: '31536000',
-        upsert: false,
-      });
+    const { error } = await uploadWithRetry('chat-images', filePath, file.buffer, {
+      contentType: file.mimetype,
+      cacheControl: '31536000',
+      upsert: false,
+    });
 
     if (error) throw error;
 
