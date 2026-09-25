@@ -5,9 +5,7 @@ meta:
     version: 22
 
 build:
-  additionalCommands: |
-    cd frontend && npm install && npm run build
-    cd .. && npm install
+  additionalCommands: cd frontend && npm install && npm run build && cd .. && npm install
 
 run:
   command: node server.js
