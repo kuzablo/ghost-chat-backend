@@ -42,7 +42,9 @@ self.addEventListener('fetch', (event) => {
 
   if (isNavigate) {
     event.respondWith(
-      fetch(req, { cache: 'no-store' }).catch(() => fetch(req))
+      fetch(req, { cache: 'no-store' })
+        .catch(() => caches.match(req))
+        .then((r) => r || new Response('', { status: 503, statusText: 'Offline' }))
     );
     return;
   }
