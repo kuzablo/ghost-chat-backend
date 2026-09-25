@@ -1,0 +1,554 @@
+/* ===== Панель игроков =====
+   [2.48.5] Скролл — у секций «Онлайн», «Друзья», «Запросы».
+            Шапка/поиск/я/«О приложении» — зафиксированы.
+   [2.35.34] Кастомный фон, плейсхолдер, орбита в шапке
+   [2.35.25] Скрытое состояние — панель в DOM
+   [2.32.39] unreadPulse: box-shadow → transform
+*/
+
+.players-overlay {
+  position: fixed;
+  top: 60px;
+  left: 10px;
+  z-index: 1000;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  width: 260px;
+  height: 70vh;
+  max-height: 70vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.players-overlay--hidden {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ===== Кастомный фон ===== */
+
+.players-overlay--custom {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.players-overlay--custom::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+  z-index: 0;
+  border-radius: inherit;
+}
+
+body.dark .players-overlay--custom::before {
+  background: rgba(10, 15, 25, 0.5);
+}
+
+.players-overlay--custom > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== Плейсхолдер фона ===== */
+
+.players-bg-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.players-bg-loading-mascot {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid var(--card-border);
+  background: #FFF url('/mascot.png') center / cover no-repeat;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  animation: playersBgMascotPulse 1.4s ease-in-out infinite;
+}
+
+body.dark .players-bg-loading-mascot {
+  border-color: #3BB5E8;
+}
+
+@keyframes playersBgMascotPulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.06); opacity: 1; }
+}
+
+/* ===== Шапка панели ===== */
+
+.players-title {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.players-header--orbit {
+  position: relative;
+  width: 100%;
+  height: 130px;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  z-index: 5;
+  flex-shrink: 0;
+}
+
+/* ===== Общие элементы ===== */
+
+.players-overlay h4 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.players-overlay .search-input {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+/* ===== [2.48.5] Список: колонка, фиксированное + секции со скроллом ===== */
+
+.players-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+}
+
+.players-list > .player-item--self,
+.players-list > .players-info-link {
+  flex-shrink: 0;
+}
+
+.players-section {
+  flex: 1 1 0;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+}
+
+.players-section--requests {
+  flex: 0 1 auto;
+  max-height: 22vh;
+}
+
+.players-section > .friends-header {
+  flex-shrink: 0;
+  position: static;
+}
+
+.players-section-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  scrollbar-color: var(--btn-bg) transparent;
+}
+
+.players-section-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.players-section-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.players-section-scroll::-webkit-scrollbar-thumb {
+  background: var(--btn-bg);
+  border-radius: 6px;
+}
+
+.players-section-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--nick-color);
+}
+
+/* ===== Общие поля ===== */
+
+.search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 8px;
+  touch-action: manipulation;
+}
+
+.search-input::placeholder { color: var(--text-muted); }
+
+.friends-header {
+  margin-top: 12px;
+  margin-bottom: 6px;
+  padding: 10px 6px 6px;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--card-bg);
+}
+
+.friends-header:first-child {
+  margin-top: 0;
+}
+
+.friends-header:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--card-border) 15%,
+    var(--card-border) 85%,
+    transparent 100%
+  );
+  opacity: 0.55;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-sm);
+  transition: background 0.12s;
+}
+
+body.dark .player-item {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.player-item:last-child {
+  border-bottom: none;
+}
+
+.player-item:hover {
+  background: var(--messages-bg);
+}
+
+.players-list .player-item:hover .player-name {
+  color: var(--btn-bg);
+}
+
+.player-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #FFF;
+  border: 1.5px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+.player-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  transition: color 0.12s;
+  text-align: center;
+}
+
+.player-stats {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
+  letter-spacing: 0.3px;
+}
+
+.player-item .online-status {
+  margin-left: 6px;
+}
+
+.player-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.player-action-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--input-bg);
+  border: 1.5px solid var(--card-border);
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text);
+  position: relative;
+  transition: transform 0.12s, background 0.15s;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.player-action-btn:active {
+  transform: scale(0.9);
+  background: var(--messages-bg);
+}
+
+.player-action-btn--danger {
+  border-color: var(--danger);
+}
+
+.player-action-btn--unread {
+  background: var(--btn-bg);
+  border-color: var(--btn-border);
+  animation: unreadPulse 1.4s ease-in-out infinite;
+}
+
+.player-action-btn--unread:active {
+  animation: none;
+}
+
+@keyframes unreadPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+body.dark .player-action-btn--unread {
+  box-shadow: 0 0 0 1.5px #3BB5E8;
+}
+
+.online-status {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--online);
+  border: 1.5px solid var(--card-border);
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.friend-request-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 13px;
+}
+
+.friend-request-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.friend-request-actions .btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 8px;
+}
+
+.unread-excl {
+  font-size: 9px;
+  font-weight: 800;
+  background: #F5A9C0;
+  color: #111;
+  border: 2px solid #111;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.players-info-link {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 2px dashed var(--card-border);
+  border-radius: var(--radius-md);
+  color: var(--nick-color);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s, transform 0.12s;
+  text-align: center;
+}
+
+.players-info-link:active {
+  transform: scale(0.97);
+  background: var(--messages-bg);
+}
+
+body.dark .players-info-link {
+  color: #3BB5E8;
+}
+
+@media (max-width: 600px) {
+  .players-info-link {
+    margin-top: 12px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+}
+
+.player-item--self {
+  position: relative;
+  border: 2px solid var(--btn-bg);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 181, 232, 0.06);
+  margin-bottom: 8px;
+  padding: 8px 8px;
+}
+
+.player-item--self .player-name {
+  color: var(--nick-color);
+}
+
+.player-item--self:hover {
+  background: rgba(59, 181, 232, 0.12);
+}
+
+.player-hint {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--btn-bg);
+  background: rgba(59, 181, 232, 0.12);
+  border: 1px dashed var(--btn-bg);
+  border-radius: 8px;
+  padding: 3px 6px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  animation: selfHintPulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@keyframes selfHintPulse {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+
+body.dark .player-item--self {
+  background: rgba(59, 181, 232, 0.08);
+  border-color: #3BB5E8;
+}
+
+body.dark .player-item--self:hover {
+  background: rgba(59, 181, 232, 0.16);
+}
+
+body.dark .player-hint {
+  color: #3BB5E8;
+  border-color: #3BB5E8;
+  background: rgba(59, 181, 232, 0.1);
+}
+
+/* ===== [2.31.3] Кольцо long-press (0.5с) ===== */
+
+@property --ring-progress {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.player-item--pressing {
+  position: relative;
+}
+
+.player-item--pressing::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  border-radius: calc(var(--radius-sm) + 3px);
+  pointer-events: none;
+  z-index: 5;
+  padding: var(--ring-thickness);
+  background: conic-gradient(
+    from -90deg,
+    var(--ring-color) 0deg,
+    var(--ring-color) var(--ring-progress),
+    var(--ring-color-faded) var(--ring-progress),
+    var(--ring-color-faded) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: playerRingFill var(--ring-duration-player) linear forwards;
+}
+
+@keyframes playerRingFill {
+  from { --ring-progress: 0deg; }
+  to   { --ring-progress: 360deg; }
+}

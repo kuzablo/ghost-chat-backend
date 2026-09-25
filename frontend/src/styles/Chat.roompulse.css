@@ -1,0 +1,44 @@
+/* ============================================================= */
+/* [2.33.8] Пульс комнаты — тонкая полоска-дыхание под шапкой    */
+/* ============================================================= */
+
+.room-pulse {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  margin: -6px 0 8px;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.85;
+  transition: opacity 0.4s ease;
+}
+
+.room-pulse-svg {
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: visible;
+}
+
+body.dark .room-pulse {
+  opacity: 1;
+}
+
+/* На мобиле — чуть тише, чтобы не мешало */
+@media (max-width: 600px) {
+  .room-pulse {
+    height: 6px;
+    margin: -4px 0 6px;
+    opacity: 0.7;
+  }
+  .room-pulse-svg {
+    height: 6px;
+  }
+}
+
+/* Уважаем настройку «уменьшить движение» */
+@media (prefers-reduced-motion: reduce) {
+  .room-pulse {
+    opacity: 0.4;
+  }
+}

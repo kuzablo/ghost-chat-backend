@@ -1,0 +1,121 @@
+/* ============================================================= */
+/* [2.43.0] Индикатор отправки — вместо строки ввода              */
+/* ============================================================= */
+
+.sending-indicator {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: auto;
+  padding: 12px 18px;
+  min-height: 72px;
+  background: linear-gradient(
+    135deg,
+    var(--messages-bg) 0%,
+    var(--card-bg) 100%
+  );
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.1);
+  animation: sendingIn 0.24s cubic-bezier(0.34, 1.4, 0.64, 1);
+  flex-shrink: 0;
+}
+
+@keyframes sendingIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Маскот слева — дышит ===== */
+
+.sending-indicator-mascot {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--card-border);
+  background: #FFF url('/mascot.png') center / cover no-repeat;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+  animation: sendingMascot 1.6s ease-in-out infinite;
+}
+
+body.dark .sending-indicator-mascot {
+  border-color: #3BB5E8;
+  background-color: #1D2A42;
+}
+
+@keyframes sendingMascot {
+  0%, 100% { transform: scale(1)    rotate(0deg);  }
+  40%      { transform: scale(1.06) rotate(-3deg); }
+  70%      { transform: scale(1.04) rotate(3deg);  }
+}
+
+/* ===== Тело ===== */
+
+.sending-indicator-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sending-indicator-label {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+
+/* ===== Три пульсирующие точки ===== */
+
+.sending-indicator-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 6px;
+}
+
+.sending-indicator-dots span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--btn-bg);
+  opacity: 0.4;
+  animation: sendingDot 1.2s ease-in-out infinite;
+}
+
+.sending-indicator-dots span:nth-child(1) { animation-delay: 0s;    }
+.sending-indicator-dots span:nth-child(2) { animation-delay: 0.18s; }
+.sending-indicator-dots span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes sendingDot {
+  0%, 100% { opacity: 0.3; transform: translateY(0);    }
+  50%      { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* ===== Мобильная версия ===== */
+
+@media (max-width: 600px) {
+  .sending-indicator {
+    padding: 10px 14px;
+    min-height: 64px;
+    gap: 12px;
+  }
+  .sending-indicator-mascot {
+    width: 38px;
+    height: 38px;
+  }
+  .sending-indicator-label {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sending-indicator-mascot,
+  .sending-indicator-dots span {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+  }
+}

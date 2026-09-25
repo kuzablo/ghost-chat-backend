@@ -1,0 +1,111 @@
+/* ============================================================= */
+/* [2.37.0] Тост о новой версии фронта                            */
+/* ============================================================= */
+
+.update-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  transform: translateX(-50%);
+  z-index: 3200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 10px;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  animation: updateToastIn 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes updateToastIn {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(20px) scale(0.94); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+.update-toast-mascot {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--card-border);
+  background: #FFF url('/mascot.png') center / cover no-repeat;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+}
+
+body.dark .update-toast-mascot {
+  border-color: #3BB5E8;
+  background-color: #1D2A42;
+}
+
+.update-toast-mascot img { display: none; }
+
+.update-toast-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.update-toast-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+}
+
+.update-toast-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.update-toast-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.update-toast-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 800;
+  border: 2px solid var(--card-border);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.1s, background 0.15s;
+}
+
+.update-toast-btn:active { transform: scale(0.94); }
+
+.update-toast-btn--primary {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border-color: var(--btn-border);
+}
+
+.update-toast-btn--ghost {
+  background: transparent;
+  color: var(--text);
+}
+
+@media (max-width: 480px) {
+  .update-toast {
+    width: calc(100vw - 24px);
+    flex-wrap: wrap;
+  }
+  .update-toast-sub { max-width: 100%; }
+  .update-toast-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

@@ -5,9 +5,11 @@ meta:
     version: 22
 
 build:
-  additionalCommands: npm install
+  additionalCommands: |
+    cd frontend && npm install && npm run build
+    cd .. && npm install
 
 run:
-  command: npm start
+  command: node server.js
   containerPort: 3000
   persistenceMount: /data

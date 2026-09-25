@@ -1,0 +1,735 @@
+/* ============================================================= */
+/* [2.42.0] Оверлей записи видео-кружка                            */
+/* ============================================================= */
+
+.video-rec-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(17, 17, 17, 0.82);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: videoOverlayIn 0.22s ease-out;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.dark .video-rec-overlay {
+  background: rgba(0, 0, 0, 0.88);
+}
+
+@keyframes videoOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.video-rec-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 40px 20px calc(40px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+
+.video-rec-inner--hint-send::before,
+.video-rec-inner--hint-cancel::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 30%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.video-rec-inner--hint-send::before {
+  top: 0;
+  background: linear-gradient(to bottom, rgba(34, 197, 94, 0.35), rgba(34, 197, 94, 0));
+  animation: videoEdgePulse 1.4s ease-in-out infinite;
+}
+
+.video-rec-inner--hint-cancel::before {
+  bottom: 0;
+  background: linear-gradient(to top, rgba(225, 29, 72, 0.35), rgba(225, 29, 72, 0));
+  animation: videoEdgePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes videoEdgePulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+.video-rec-top-hint,
+.video-rec-bottom-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 1;
+  padding: 6px 14px;
+  border-radius: 14px;
+}
+
+.video-rec-top-hint {
+  color: rgba(255, 255, 255, 0.55);
+  animation: videoHintUp 2.4s ease-in-out infinite;
+}
+
+.video-rec-bottom-hint {
+  color: rgba(255, 255, 255, 0.4);
+  animation: videoHintDown 2.4s ease-in-out infinite;
+}
+
+.video-rec-inner--hint-send .video-rec-top-hint {
+  color: #22C55E;
+  text-shadow: 0 0 12px rgba(34, 197, 94, 0.6);
+  animation: videoHintUp 0.7s ease-in-out infinite;
+}
+
+.video-rec-inner--hint-cancel .video-rec-bottom-hint {
+  color: #F87171;
+  text-shadow: 0 0 12px rgba(248, 113, 113, 0.6);
+  animation: videoHintDown 0.7s ease-in-out infinite;
+}
+
+@keyframes videoHintUp {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+
+@keyframes videoHintDown {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(6px); }
+}
+
+.video-rec-arrow { font-size: 14px; font-weight: 900; }
+
+.video-rec-square-wrap {
+  position: relative;
+  z-index: 2;
+  will-change: transform, opacity;
+}
+
+.video-rec-square {
+  position: relative;
+  width: min(72vw, 320px);
+  aspect-ratio: 1 / 1;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #000;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 8px rgba(255, 255, 255, 0.06);
+}
+
+body.dark .video-rec-square {
+  border-color: #3BB5E8;
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.7),
+    0 0 0 8px rgba(59, 181, 232, 0.12);
+}
+
+.video-rec-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.video-rec-video--mirror {
+  transform: scaleX(-1);
+}
+
+.video-rec-placeholder {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.video-rec-switch {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFF;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s, background 0.15s;
+  z-index: 4;
+}
+
+.video-rec-switch:active {
+  transform: scale(0.9);
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.video-rec-timer {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  z-index: 4;
+}
+
+.video-rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #E11D48;
+  box-shadow: 0 0 8px rgba(225, 29, 72, 0.7);
+  animation: videoRecDotPulse 1.1s ease-in-out infinite;
+}
+
+.video-rec-dot--frozen {
+  background: #F59E0B;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  animation: none;
+}
+
+@keyframes videoRecDotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.35); opacity: 0.55; }
+}
+
+.video-rec-time {
+  font-size: 14px;
+  font-weight: 800;
+  color: #FFF;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  min-width: 46px;
+  text-align: center;
+}
+
+.video-rec-info-tip {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 90px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #111;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+  pointer-events: none;
+  animation: videoInfoTipIn 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+body.dark .video-rec-info-tip {
+  background: rgba(29, 42, 66, 0.96);
+  color: #EAF2FA;
+}
+
+@keyframes videoInfoTipIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.video-rec-drag-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  z-index: 3;
+}
+
+.video-rec-drag-progress--send {
+  top: 0;
+  background: linear-gradient(to right, #22C55E, #16A34A);
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.8);
+}
+
+.video-rec-drag-progress--cancel {
+  bottom: 0;
+  background: linear-gradient(to right, #F87171, #E11D48);
+  box-shadow: 0 0 16px rgba(248, 113, 113, 0.8);
+}
+
+@media (max-width: 600px) {
+  .video-rec-square { width: min(78vw, 320px); }
+  .video-rec-top-hint,
+  .video-rec-bottom-hint { font-size: 11px; padding: 5px 10px; }
+}
+
+/* ============================================================= */
+/* [2.42.2] VideoMessage — плеер-квадрат, резкие рамки как у gif   */
+/* ============================================================= */
+
+.video-msg {
+  display: inline-block;
+  margin-top: 2px;
+}
+
+.video-msg-square {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  border-radius: 0;
+  overflow: hidden;
+  background: #000;
+  border: none;
+  box-shadow: none;
+  touch-action: manipulation;
+}
+
+body.dark .video-msg-square {
+  border: none;
+  box-shadow: none;
+}
+
+.video-msg-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  cursor: pointer;
+}
+
+.video-msg-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFF;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s, background 0.15s;
+  z-index: 3;
+}
+
+.video-msg-play svg { width: 26px; height: 26px; margin-left: 3px; }
+.video-msg-play:active { transform: translate(-50%, -50%) scale(0.9); }
+
+.video-msg-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 4;
+}
+
+.video-msg-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.video-msg-btn svg { width: 16px; height: 16px; }
+.video-msg-btn:active {
+  transform: scale(0.9);
+  background: rgba(0, 0, 0, 0.75);
+}
+
+/* Fullscreen оверлей */
+.video-msg-fs {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.95);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: videoMsgFsIn 0.18s ease-out;
+  touch-action: none;
+}
+
+@keyframes videoMsgFsIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.video-msg-fs-video {
+  max-width: 96vw;
+  max-height: 92vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0;
+  background: #000;
+}
+
+.video-msg-fs-close {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  right: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #FFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  z-index: 2;
+}
+
+.video-msg-fs-close svg { width: 20px; height: 20px; }
+.video-msg-fs-close:active { transform: scale(0.9); }
+
+/* Мобильная адаптация */
+@media (max-width: 600px) {
+  .video-msg-square {
+    width: 180px;
+    height: 180px;
+  }
+  .video-msg-play { width: 48px; height: 48px; }
+  .video-msg-play svg { width: 22px; height: 22px; }
+  .video-msg-btn { width: 28px; height: 28px; }
+  .video-msg-btn svg { width: 14px; height: 14px; }
+}
+
+/* ============================================================= */
+/* [2.42.0] Универсальная обводка удержания (250мс) для gif/video */
+/* ============================================================= */
+
+@property --hold-p {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.hold-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 16px;
+  pointer-events: none;
+  z-index: 5;
+  padding: 3px;
+  background: conic-gradient(
+    from -90deg,
+    var(--ring-color) 0deg,
+    var(--ring-color) var(--hold-p),
+    var(--ring-color-faded) var(--hold-p),
+    var(--ring-color-faded) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: holdRingFill 250ms linear forwards;
+}
+
+@keyframes holdRingFill {
+  from { --hold-p: 0deg; }
+  to   { --hold-p: 360deg; }
+}
+
+/* ============================================================= */
+/* [2.42.0] Video-only сообщение в общем чате                     */
+/* ============================================================= */
+
+.msg--video-only {
+  display: flex;
+  margin: 6px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  max-width: 100%;
+  position: relative;
+}
+
+.msg--video-only.msg--own {
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+
+.msg--video-only.msg--other {
+  justify-content: flex-start;
+  padding-left: 6px;
+}
+
+.msg-video-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.msg--video-only.msg--own .msg-video-wrap {
+  align-items: flex-end;
+}
+
+/* Личка: video-only сообщение */
+.private-msg--video {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+  max-width: none;
+}
+
+.private-msg--video .video-msg-square {
+  width: 180px;
+  height: 180px;
+}
+
+/* ============================================================= */
+/* [2.42.7] Voice-only и Video-only — ник + время + контент       */
+/* ============================================================= */
+
+.msg--voice-only,
+.msg--video-only {
+  display: flex;
+  margin: 6px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  max-width: 100%;
+  position: relative;
+}
+
+.msg--voice-only.msg--own,
+.msg--video-only.msg--own {
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+
+.msg--voice-only.msg--other,
+.msg--video-only.msg--other {
+  justify-content: flex-start;
+  padding-left: 6px;
+}
+
+.msg--video-only {
+  padding-bottom: 16px;
+}
+
+.msg-voice-wrap,
+.msg-video-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.msg--voice-only.msg--own .msg-voice-wrap,
+.msg--video-only.msg--own .msg-video-wrap {
+  align-items: flex-end;
+}
+
+.msg-voice-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 4px;
+  line-height: 1.15;
+}
+
+.msg-voice-header .msg-nick {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--nick-color);
+}
+
+.msg-voice-header .msg-time {
+  font-size: 10px;
+  color: var(--time-color);
+}
+
+/* Личка: voice-only */
+.private-msg--voice {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+  max-width: none;
+}
+
+/* ============================================================= */
+/* [2.47.2] Реакции на видео в чате + свои контролы в fullscreen  */
+/* ============================================================= */
+
+.msg-video-reactions {
+  position: absolute;
+  top: 100%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.msg-video-reaction-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  position: relative;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  animation: imageOnlyReactionPop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.msg-video-reaction-badge.own {
+  background: var(--btn-bg);
+  border-color: var(--btn-border);
+}
+
+.msg-video-reaction-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--nick-color);
+  color: #FFF;
+  border: 2px solid var(--card-bg);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+body.dark .msg-video-reaction-count {
+  background: #3BB5E8;
+  color: #0E1726;
+}
+
+/* Fullscreen */
+
+/* [2.47.3] Fullscreen видео — column: реакции сверху, кнопки снизу.
+   Не перекрываются. */
+.fs-video-bottombar {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.fs-video-bottombar .fs-reactions-strip {
+  max-width: 100%;
+  justify-content: flex-start;
+  padding-bottom: 0;
+}
+
+/* [2.47.4] Две кнопки по краям: mute слева, 😀 справа.
+   Пикер от 😀 не накрывает mute. */
+.fs-video-bottombar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.fs-video-bottombar-actions .fs-reaction-toggle--react {
+  margin-left: auto;
+}
+
+.fs-reaction-toggle svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.fs-video-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFF;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 5;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.fs-video-play svg { width: 32px; height: 32px; margin-left: 4px; }
+.fs-video-play:active { transform: translate(-50%, -50%) scale(0.9); }
+
+@media (max-width: 600px) {
+  .fs-video-play { width: 60px; height: 60px; }
+  .fs-video-play svg { width: 26px; height: 26px; }
+}

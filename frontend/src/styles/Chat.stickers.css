@@ -1,0 +1,846 @@
+/* ===== [2.20.4] Меню стикеров (long-press) ===== */
+
+.sticker-menu-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(17, 17, 17, 0.55);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: stickerOverlayIn 0.2s ease-out;
+  touch-action: none;
+}
+
+body.dark .sticker-menu-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+@keyframes stickerOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sticker-menu {
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  max-width: 92vw;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+  animation: stickerMenuIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@keyframes stickerMenuIn {
+  0%   { opacity: 0; transform: scale(0.4) rotate(-6deg); }
+  60%  { opacity: 1; transform: scale(1.06) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+.sticker-menu-header { text-align: center; }
+
+.sticker-menu-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.sticker-menu-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.sticker-menu-items {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+}
+
+.sticker-menu-item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: #FFFFFF;
+  border: 2px solid #111;
+  color: #111;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  box-shadow:
+    0 3px 0 rgba(0, 0, 0, 0.10),
+    0 6px 14px rgba(0, 0, 0, 0.12),
+    0 0 0 4px rgba(255, 255, 255, 0.55);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  opacity: 0;
+  transform: scale(0.4) translateY(14px);
+  animation: stickerItemIn 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation-delay: var(--sticker-delay, 0s);
+}
+
+@keyframes stickerItemIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) translateY(14px) rotate(0deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.12) translateY(-4px) rotate(var(--sticker-rotate, 0deg));
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0) rotate(var(--sticker-rotate, 0deg));
+  }
+}
+
+.sticker-menu-item:active {
+  transform: scale(0.92) rotate(var(--sticker-rotate, 0deg)) !important;
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.10),
+    0 3px 8px rgba(0, 0, 0, 0.15),
+    0 0 0 4px rgba(255, 255, 255, 0.55);
+}
+
+.sticker-menu-item--danger {
+  background: #FEE2E2;
+  border-color: #E11D48;
+  color: #E11D48;
+}
+
+body.dark .sticker-menu-item {
+  background: #1D2A42;
+  border-color: #2C3E5A;
+  color: #EAF2FA;
+  box-shadow:
+    0 3px 0 rgba(0, 0, 0, 0.3),
+    0 6px 14px rgba(0, 0, 0, 0.4),
+    0 0 0 4px rgba(59, 181, 232, 0.15);
+}
+
+body.dark .sticker-menu-item--danger {
+  background: rgba(225, 29, 72, 0.15);
+  border-color: #F87171;
+  color: #F87171;
+}
+
+.sticker-menu-item-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.sticker-menu-item-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #E11D48;
+  color: #FFFFFF;
+  border: 2px solid var(--card-border);
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+  animation: stickerBadgePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes stickerBadgePulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.12); }
+}
+
+body.dark .sticker-menu-item-badge {
+  border-color: #172236;
+}
+
+/* ===== [2.31.3] Кольцо long-press (0.5с) ===== */
+
+@property --ring-progress {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.player-item--pressing {
+  position: relative;
+}
+
+.player-item--pressing::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  border-radius: calc(var(--radius-sm) + 3px);
+  pointer-events: none;
+  z-index: 5;
+  padding: var(--ring-thickness);
+  background: conic-gradient(
+    from -90deg,
+    var(--ring-color) 0deg,
+    var(--ring-color) var(--ring-progress),
+    var(--ring-color-faded) var(--ring-progress),
+    var(--ring-color-faded) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: playerRingFill var(--ring-duration-player) linear forwards;
+}
+
+@keyframes playerRingFill {
+  from { --ring-progress: 0deg; }
+  to   { --ring-progress: 360deg; }
+}
+
+/* ============================================================= */
+/* [2.35.21] input-icon-btn — единая кнопка стикеров и фото       */
+/* ============================================================= */
+
+.input-icon-btn {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: 2.5px solid var(--card-border);
+  background: var(--input-bg);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.input-icon-btn svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.input-icon-btn:hover {
+  background: var(--messages-bg);
+}
+.input-icon-btn:active {
+  transform: scale(0.92);
+  background: var(--messages-bg);
+}
+.input-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+body.dark .input-icon-btn {
+  border-color: #2C3E5A;
+  color: #EAF2FA;
+}
+body.dark .input-icon-btn:hover {
+  background: #1D2A42;
+}
+
+.input-icon-btn--compact {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+}
+.input-icon-btn--compact svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ===== Панель стикеров ===== */
+
+.sticker-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.45);
+  z-index: 1900;
+  animation: stickerPanelOverlayIn 0.15s ease-out;
+}
+body.dark .sticker-panel-overlay {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+@keyframes stickerPanelOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sticker-panel {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 420px;
+  max-height: 56vh;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-bottom: none;
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 1901;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: stickerPanelIn 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.25);
+}
+
+@keyframes stickerPanelIn {
+  from { transform: translateX(-50%) translateY(24px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+.sticker-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sticker-panel-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.sticker-panel-upload {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 2px solid var(--btn-border);
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s;
+}
+.sticker-panel-upload:active {
+  transform: scale(0.9);
+}
+.sticker-panel-upload:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sticker-panel-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--card-border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s;
+}
+.sticker-panel-close:active {
+  transform: scale(0.9);
+}
+
+.sticker-panel-error {
+  font-size: 12px;
+  color: var(--danger);
+  font-weight: 600;
+  padding: 4px 8px;
+  background: rgba(225, 29, 72, 0.1);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sticker-panel-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sticker-panel-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: min-content;
+  gap: 8px;
+  padding: 2px;
+  will-change: transform;
+  touch-action: pan-y;
+}
+
+.sticker-panel-tile {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--card-border);
+  background: var(--messages-bg);
+  cursor: pointer;
+  padding: 4px;
+  overflow: hidden;
+  touch-action: manipulation;
+  transition: transform 0.12s, box-shadow 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sticker-panel-tile:hover {
+  box-shadow: 0 0 0 3px rgba(59, 181, 232, 0.35);
+}
+.sticker-panel-tile:active {
+  transform: scale(0.94);
+}
+.sticker-panel-tile img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* ============================================================= */
+/* [2.35.44] Стикер в общем чате — крупнее (220×220)              */
+/*           выравнивание через msg--own / msg--other             */
+/* ============================================================= */
+
+.msg--sticker {
+  display: flex;
+  margin: 6px 0;
+  padding: 0;
+  background: none;
+  border: none;
+  max-width: 100%;
+  min-height: 0;
+  position: relative;
+  touch-action: pan-y;
+}
+
+.msg--sticker.msg--own {
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+
+.msg--sticker.msg--other {
+  justify-content: flex-start;
+  padding-left: 6px;
+}
+
+.msg-sticker-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.msg--sticker.msg--own .msg-sticker-wrap {
+  align-items: flex-end;
+}
+
+.msg-sticker-nick {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0.85;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg--sticker.msg--own .msg-sticker-nick {
+  color: var(--btn-bg);
+}
+
+.msg-sticker-img {
+  width: 220px;
+  height: 220px;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.18));
+  animation: stickerThrow 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+  pointer-events: none;
+}
+
+@keyframes stickerThrow {
+  0%   { opacity: 0; transform: scale(0.35) rotate(-8deg); }
+  55%  { opacity: 1; transform: scale(1.08) rotate(3deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+.msg--sticker .msg-sticker-wrap.msg-content--ready-delete {
+  animation: msgReadyDelete 1s ease-in-out infinite;
+}
+
+/* ===== Стикер в личке — ник над гифкой ===== */
+
+.private-msg--sticker {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 8px;
+  max-width: 200px;
+  cursor: default;
+}
+.private-msg--sticker .private-msg-sticker-nick {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0 4px 2px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.private-msg--own.private-msg--sticker .private-msg-sticker-nick {
+  color: var(--btn-bg);
+  text-align: right;
+}
+.private-msg--sticker .private-msg-sticker {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.18));
+  animation: stickerThrow 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ===== Мобильная адаптация ===== */
+
+@media (max-width: 600px) {
+  .sticker-panel {
+    max-width: 100vw;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    padding-top: 12px;
+    max-height: 60vh;
+  }
+  .sticker-panel-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .msg-sticker-img {
+    width: 180px;
+    height: 180px;
+  }
+  .msg-sticker-nick {
+    max-width: 180px;
+  }
+  .private-msg--sticker .private-msg-sticker {
+    width: 150px;
+    height: 150px;
+  }
+  .input-icon-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+  }
+  .input-icon-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* ============================================================= */
+/* [2.40.1] Обёртка сетки + свайп                                  */
+/* ============================================================= */
+
+.sticker-panel-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  /* [2.40.2] flex-контекст для сетки. Без него flex: 1 на .sticker-panel-grid
+     не срабатывает, сетка не ограничивается по высоте, overflow-y: auto
+     не работает — особенно чувствуется в PWA на мобиле. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================================= */
+/* [2.41.0] Избранные стикеры                                      */
+/* ============================================================= */
+
+.sticker-panel-tile--fav {
+  border-color: #F59E0B;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+}
+
+.sticker-panel-tile-fav-marker {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #FFF;
+  border: 2px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+body.dark .sticker-panel-tile-fav-marker {
+  background: #1D2A42;
+  border-color: #F59E0B;
+}
+
+/* Тост внутри панели — переиспользуем .duel-notice, но позиционируем
+   над панелью, а не внизу экрана. */
+.sticker-panel-toast {
+  position: absolute !important;
+  left: 50% !important;
+  bottom: calc(100% + 12px) !important;
+  transform: translateX(-50%) !important;
+  z-index: 10 !important;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: stickerToastIn 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes stickerToastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ============================================================= */
+/* [2.46.0] Экран «Избранные» и кнопка «Все стикеры»              */
+/* ============================================================= */
+
+.sticker-panel-back {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--card-border);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.sticker-panel-back:hover {
+  background: var(--messages-bg);
+}
+
+.sticker-panel-back:active {
+  transform: scale(0.9);
+}
+
+/* ===== Пустой экран избранных ===== */
+
+.sticker-fav-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 20px;
+  text-align: center;
+  min-height: 0;
+}
+
+.sticker-fav-empty-mascot {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 3px solid var(--card-border);
+  background: #FFF url('/mascot.png') center / cover no-repeat;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  animation: stickerFavMascot 1.8s ease-in-out infinite;
+}
+
+body.dark .sticker-fav-empty-mascot {
+  border-color: #3BB5E8;
+  background-color: #1D2A42;
+}
+
+@keyframes stickerFavMascot {
+  0%, 100% { transform: scale(1)    rotate(0deg);  }
+  40%      { transform: scale(1.06) rotate(-2deg); }
+  70%      { transform: scale(1.04) rotate(2deg);  }
+}
+
+.sticker-fav-empty-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.sticker-fav-empty-text {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 280px;
+}
+
+.sticker-fav-empty-text b {
+  color: var(--nick-color);
+  font-weight: 800;
+}
+
+body.dark .sticker-fav-empty-text b {
+  color: #3BB5E8;
+}
+
+/* ===== Кнопка «Все стикеры» ===== */
+
+.sticker-fav-all-btn {
+  flex-shrink: 0;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #F5A9C0 0%, #FBC5D8 60%, #7FCCF0 100%);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-md);
+  color: #111;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.18);
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+
+body.dark .sticker-fav-all-btn {
+  background: linear-gradient(135deg, #172236 0%, #1D2A42 45%, #2C3E5A 100%);
+  color: #EAF2FA;
+  border-color: #3BB5E8;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 16px rgba(59, 181, 232, 0.15);
+}
+
+.sticker-fav-all-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
+}
+
+.sticker-fav-all-btn:active {
+  transform: translateY(2px) scale(0.98);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.sticker-fav-all-btn-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.sticker-fav-all-btn-text {
+  flex: 1;
+  text-align: left;
+}
+
+.sticker-fav-all-btn-arrow {
+  font-size: 16px;
+  font-weight: 900;
+  transition: transform 0.15s;
+}
+
+.sticker-fav-all-btn:hover .sticker-fav-all-btn-arrow {
+  transform: translateX(3px);
+}
+
+/* ===== Сетка избранных — чуть крупнее ===== */
+
+.sticker-panel-grid--fav {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 600px) {
+  .sticker-panel-grid--fav {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .sticker-fav-empty-mascot {
+    width: 72px;
+    height: 72px;
+  }
+
+  .sticker-fav-empty-title {
+    font-size: 15px;
+  }
+
+  .sticker-fav-empty-text {
+    font-size: 12.5px;
+  }
+
+  .sticker-fav-all-btn {
+    font-size: 13px;
+    padding: 11px 14px;
+  }
+}

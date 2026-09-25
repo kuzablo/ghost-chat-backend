@@ -1,0 +1,43 @@
+{
+  "id": "/",
+  "name": "banjoboy's crew",
+  "short_name": "crew",
+  "description": "Чат banjoboy's crew",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5A9C0",
+  "theme_color": "#F5A9C0",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/mobile.png",
+      "sizes": "1183x2560",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Чат на телефоне"
+    },
+    {
+      "src": "/screenshots/desktop.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Чат на компьютере"
+    }
+  ]
+}

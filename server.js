@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.2';
+const VERSION = '2.28.3';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -151,6 +151,8 @@ const uploadVideo = multer({
 });
 
 const app = express();
+const path = require('path');
+const distPath = path.join(__dirname, 'frontend', 'dist');
 
 const ALLOWED_ORIGINS = [
   'https://banjoboy420.ru',
@@ -858,6 +860,14 @@ app.post('/api/push/unsubscribe', async (req, res) => {
     .eq('endpoint', endpoint);
 
   res.json({ ok: true });
+});
+
+// [2.28.3] Раздача собранного фронта из frontend/dist.
+app.use(express.static(distPath));
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(distPath, 'index.html'));
 });
 
 const server = app.listen(PORT, () => {

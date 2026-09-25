@@ -1,0 +1,1058 @@
+/* ============================================================= */
+/* [2.34.3] Кастомизация фона диалогов + крупнее аватарки         */
+/* ============================================================= */
+
+.dialogs-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(17, 17, 17, 0.35);
+  z-index: 1090;
+  animation: dialogsOverlayIn 0.18s ease-out;
+}
+
+body.dark .dialogs-overlay {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@keyframes dialogsOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dialogs-panel {
+  position: fixed;
+  top: 60px;
+  left: 10px;
+  width: 360px;
+  max-width: 92vw;
+  max-height: 76vh;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  z-index: 1091;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: dialogsPanelIn 0.24s cubic-bezier(0.34, 1.2, 0.64, 1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+  will-change: transform;
+}
+
+@keyframes dialogsPanelIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Фон пользователя — затемняем, чтобы текст читался */
+.dialogs-panel--custom::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+  z-index: 0;
+  border-radius: inherit;
+}
+
+body.dark .dialogs-panel--custom::before {
+  background: rgba(10, 15, 25, 0.5);
+}
+
+.dialogs-panel--custom > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== Шапка ===== */
+
+.dialogs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 12px 14px;
+  border-bottom: 2px solid var(--card-border);
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.dialogs-panel--custom .dialogs-header {
+  background: transparent;
+}
+
+.dialogs-pulse {
+  flex-shrink: 0;
+  width: 40px;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--btn-bg);
+}
+
+.dialogs-pulse-svg {
+  display: block;
+}
+
+.dialogs-pulse-path {
+  animation-name: dialogsPulseWave;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes dialogsPulseWave {
+  0%, 100% {
+    transform: scaleY(0.6);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1.4);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialogs-pulse-path {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+.dialogs-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.dialogs-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+
+.dialogs-header-sub {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 2px;
+  letter-spacing: 0.2px;
+  text-transform: lowercase;
+}
+
+.dialogs-panel--custom .dialogs-header-sub {
+  color: var(--text);
+  opacity: 0.75;
+}
+
+.dialogs-header-bg-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.12s, background 0.15s;
+  touch-action: manipulation;
+}
+
+.dialogs-header-bg-btn:hover {
+  background: var(--messages-bg);
+}
+
+.dialogs-header-bg-btn:active {
+  transform: scale(0.9);
+  background: var(--messages-bg);
+}
+
+/* ===== Список ===== */
+
+.dialogs-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px 14px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.dialogs-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dialogs-list::-webkit-scrollbar-thumb {
+  background: var(--btn-bg);
+  border-radius: 8px;
+}
+
+/* ===== Секции ===== */
+
+.dialogs-section {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 2px;
+}
+
+.dialogs-section-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 6px;
+}
+
+.dialogs-section-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--card-border) 40%,
+    var(--card-border) 60%,
+    transparent
+  );
+  opacity: 0.4;
+}
+
+.dialogs-section-text {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dialogs-panel--custom .dialogs-section-text {
+  color: var(--text);
+  opacity: 0.85;
+}
+
+/* ===== Обёртка карточки + разделитель ===== */
+
+.dialog-card-wrap {
+  position: relative;
+}
+
+.dialog-card-wrap + .dialog-card-wrap::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 88px;
+  right: 12px;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--card-border) 15%,
+    var(--card-border) 85%,
+    transparent 100%
+  );
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+body.dark .dialog-card-wrap + .dialog-card-wrap::before {
+  opacity: 0.35;
+}
+
+/* ===== Карточка диалога ===== */
+
+.dialog-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+  touch-action: manipulation;
+  position: relative;
+}
+
+.dialog-card:hover {
+  background: rgba(59, 181, 232, 0.08);
+}
+
+.dialog-card:active {
+  transform: scale(0.985);
+  background: rgba(59, 181, 232, 0.12);
+}
+
+.dialog-card--unread {
+  background: rgba(59, 181, 232, 0.06);
+}
+
+.dialog-card--unread:hover {
+  background: rgba(59, 181, 232, 0.14);
+}
+
+/* ===== Аватарка ===== */
+
+.dialog-avatar-wrap {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dialog-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: #FFF;
+  border: 2px solid var(--card-border);
+  overflow: hidden;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s;
+}
+
+body.dark .dialog-avatar {
+  border-color: #3BB5E8;
+}
+
+.dialog-card:active .dialog-avatar {
+  transform: scale(0.95);
+}
+
+.dialog-avatar--unread {
+  border-color: var(--btn-bg);
+}
+
+.dialog-online-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #22C55E;
+  border: 3px solid var(--card-bg);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.dialogs-panel--custom .dialog-online-dot {
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+body.dark .dialogs-panel--custom .dialog-online-dot {
+  border-color: rgba(20, 25, 40, 0.95);
+}
+
+.dialog-unread-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--btn-bg);
+  pointer-events: none;
+  z-index: 1;
+  animation: dialogUnreadPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes dialogUnreadPulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+.dialog-press-ring {
+  position: absolute;
+  inset: -8px;
+  width: calc(100% + 16px);
+  height: calc(100% + 16px);
+  color: var(--btn-bg);
+  pointer-events: none;
+  z-index: 4;
+  filter: drop-shadow(0 0 6px rgba(59, 181, 232, 0.55));
+}
+
+.dialog-press-ring-path {
+  transform-origin: center;
+  transform: rotate(-90deg);
+  stroke-dasharray: 302;
+  stroke-dashoffset: 302;
+  animation: dialogPressRing 0.5s linear forwards;
+}
+
+@keyframes dialogPressRing {
+  from { stroke-dashoffset: 302; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* ===== Тело ===== */
+
+.dialog-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dialog-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dialog-nick {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  letter-spacing: 0.2px;
+}
+
+.dialog-card--unread .dialog-nick {
+  color: var(--btn-bg);
+}
+
+body.dark .dialog-card--unread .dialog-nick {
+  color: #3BB5E8;
+}
+
+.dialog-time {
+  font-size: 10px;
+  color: var(--time-color);
+  flex-shrink: 0;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.dialogs-panel--custom .dialog-time {
+  color: var(--text);
+  opacity: 0.7;
+}
+
+.dialog-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dialog-preview {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.dialog-card--unread .dialog-preview {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dialogs-panel--custom .dialog-preview {
+  color: var(--text);
+  opacity: 0.85;
+}
+
+/* ===== Бейдж ===== */
+
+.dialog-badge {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--card-border);
+  box-shadow: 0 2px 6px rgba(59, 181, 232, 0.35);
+  animation: dialogBadgePulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dialogBadgePulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.08); }
+}
+
+/* ===== Пустое состояние ===== */
+
+.dialogs-empty {
+  padding: 48px 28px;
+  text-align: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.dialogs-empty-orbit {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dialogs-empty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--btn-bg);
+  opacity: 0.35;
+  animation: dialogsEmptyBreathe 2.4s ease-in-out infinite;
+}
+
+.dialogs-empty-dot:nth-child(2) {
+  animation-delay: 0.3s;
+  opacity: 0.6;
+}
+
+.dialogs-empty-dot:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+@keyframes dialogsEmptyBreathe {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.3; }
+  50%      { transform: translateY(-4px) scale(1.15); opacity: 0.9; }
+}
+
+.dialogs-empty-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.dialogs-empty-text {
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 240px;
+}
+
+.dialogs-empty-text b {
+  color: var(--nick-color);
+  font-weight: 800;
+}
+
+body.dark .dialogs-empty-text b {
+  color: #3BB5E8;
+}
+
+/* ============================================================= */
+/* [2.34.3] Пикер фона                                            */
+/* ============================================================= */
+
+.dialogs-bg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.55);
+  z-index: 1100;
+  animation: dialogsBgOverlayIn 0.18s ease-out;
+}
+
+body.dark .dialogs-bg-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+@keyframes dialogsBgOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dialogs-bg-picker {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 380px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  z-index: 1101;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: dialogsBgPickerIn 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+  touch-action: manipulation;
+}
+
+@keyframes dialogsBgPickerIn {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.dialogs-bg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.dialogs-bg-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.dialogs-bg-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  border: 2px solid var(--card-border);
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.dialogs-bg-close:active {
+  transform: scale(0.9);
+}
+
+.dialogs-bg-section-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  padding-left: 2px;
+  margin-top: 4px;
+}
+
+.dialogs-bg-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.dialogs-bg-tile {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--card-border);
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  touch-action: manipulation;
+  transition: transform 0.15s, box-shadow 0.15s;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.dialogs-bg-tile:hover {
+  transform: scale(1.03);
+}
+
+.dialogs-bg-tile:active {
+  transform: scale(0.97);
+}
+
+.dialogs-bg-tile.active {
+  box-shadow:
+    0 0 0 2px var(--card-bg),
+    0 0 0 5px var(--btn-bg);
+}
+
+.dialogs-bg-tile-name {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-align: center;
+  color: #FFFFFF;
+  background: rgba(0, 0, 0, 0.45);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.dialogs-bg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialogs-bg-upload {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--input-bg);
+  border: 2px solid var(--card-border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.dialogs-bg-upload:hover {
+  background: var(--messages-bg);
+}
+
+.dialogs-bg-upload:active {
+  transform: scale(0.97);
+}
+
+.dialogs-bg-upload:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dialogs-bg-reset {
+  margin-top: 6px;
+  padding: 10px 14px;
+  background: transparent;
+  border: 2px dashed var(--card-border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s, color 0.15s, border-color 0.15s;
+}
+
+.dialogs-bg-reset:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.dialogs-bg-reset:active {
+  transform: scale(0.97);
+}
+
+.dialogs-bg-error {
+  font-size: 12px;
+  color: var(--danger);
+  font-weight: 600;
+  text-align: center;
+  padding: 4px 8px;
+  background: rgba(225, 29, 72, 0.1);
+  border-radius: var(--radius-sm);
+}
+
+/* ===== Мобильная версия ===== */
+
+@media (max-width: 600px) {
+  .dialogs-panel {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+    border-width: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .dialogs-header {
+    padding: 10px 12px;
+    border-bottom-width: 2px;
+  }
+
+  .dialogs-title {
+    font-size: 17px;
+  }
+
+  .dialogs-pulse {
+    width: 36px;
+  }
+
+  .dialogs-header-bg-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .dialogs-list {
+    padding: 6px 6px 16px;
+  }
+
+  .dialog-card {
+    padding: 8px 8px;
+    gap: 10px;
+  }
+
+  .dialog-avatar-wrap {
+    width: 58px;
+    height: 58px;
+  }
+
+  .dialog-avatar {
+    font-size: 20px;
+  }
+
+  .dialog-nick {
+    font-size: 15px;
+  }
+
+  .dialog-preview {
+    font-size: 13px;
+  }
+
+  .dialog-card-wrap + .dialog-card-wrap::before {
+    left: 78px;
+  }
+
+  .dialogs-empty {
+    padding: 60px 24px;
+  }
+
+  .dialogs-bg-picker {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    top: 0;
+    left: 0;
+    transform: none;
+    border-radius: 0;
+    border: none;
+    padding: max(20px, env(safe-area-inset-top, 0px) + 8px) 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    animation: dialogsBgPickerMobileIn 0.25s cubic-bezier(0.34, 1.2, 0.64, 1);
+  }
+
+  @keyframes dialogsBgPickerMobileIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .dialogs-bg-presets {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+}
+
+/* ============================================================= */
+/* [2.35.28] Поиск по имени + плейсхолдер URL-фона                */
+/* ============================================================= */
+
+.dialogs-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+
+.dialogs-search-input {
+  flex: 1;
+  padding: 8px 32px 8px 12px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  touch-action: manipulation;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.dialogs-search-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.dialogs-search-input:focus {
+  border-color: var(--btn-bg);
+  box-shadow: 0 0 0 3px rgba(59, 181, 232, 0.18);
+}
+.dialogs-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.dialogs-search-clear {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  touch-action: manipulation;
+  transition: transform 0.12s, color 0.15s;
+}
+.dialogs-search-clear:active {
+  transform: translateY(-50%) scale(0.88);
+  color: var(--text);
+}
+
+.dialogs-panel--custom .dialogs-search-input {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #111;
+}
+body.dark .dialogs-panel--custom .dialogs-search-input {
+  background: rgba(20, 25, 40, 0.85);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #EAF2FA;
+}
+
+.dialogs-search-empty {
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ===== Плейсхолдер: маскот пульсирует пока URL-фон грузится ===== */
+
+.dialogs-bg-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  pointer-events: none;
+}
+
+.dialogs-bg-loading-mascot {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid var(--card-border);
+  background: #FFF url('/mascot.png') center / cover no-repeat;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  animation: dialogsBgMascotPulse 1.4s ease-in-out infinite;
+}
+
+body.dark .dialogs-bg-loading-mascot {
+  border-color: #3BB5E8;
+}
+
+@keyframes dialogsBgMascotPulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.06); opacity: 1; }
+}
+
+/* Плейсхолдер живёт поверх списка, но не мешает поиску */
+.dialogs-panel--custom .dialogs-list {
+  position: relative;
+}
+
+/* ============================================================= */
+/* [2.35.49] Точка «моё не прочитано»                             */
+/* ============================================================= */
+
+.dialog-sent-dot {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+
+/* ============================================================= */
+/* [2.36.3] Админская кнопка «Установить всем»                    */
+/* ============================================================= */
+
+.dialogs-bg-global {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--danger);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-md);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.3px;
+}
+
+.dialogs-bg-global:hover {
+  background: #C4163B;
+}
+
+.dialogs-bg-global:active {
+  transform: scale(0.97) translateY(2px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+body.dark .dialogs-bg-global {
+  background: #F87171;
+  border-color: #2C3E5A;
+  color: #0E1726;
+}
+
+body.dark .dialogs-bg-global:hover {
+  background: #EF4444;
+}

@@ -1,0 +1,4 @@
+/*
+  [2.32.34] Убран шаблон Vite — конфликтовал с кастомной темой (color-scheme,
+            prefers-color-scheme, рамка #root). Все переменные — в Chat.css.
+*/

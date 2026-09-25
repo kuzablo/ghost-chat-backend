@@ -1,0 +1,285 @@
+/* ===== Image-only сообщения (только изображение) ===== */
+
+/*
+  [2.31.6] Реакции переехали в правый верхний угол, выступая за границу.
+           Размер ×2 для наглядности.
+  [правка 2.14.18] история про реакция и wrap.
+  [2.35.46] overlay — колонка: ник, под ним метка пересылки.
+*/
+
+.msg--image-only {
+  --image-max-w: min(340px, 70vw);
+  --image-max-h: 45vh;
+
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  /* [2.31.6] запас сверху — под выступающие реакции */
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+
+.msg-content--image-only {
+  padding: 0;
+  border: none;
+  background: transparent;
+  overflow: visible;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.msg-image-only-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: var(--image-max-w);
+  max-height: var(--image-max-h);
+  /* overflow: visible — нужно, чтобы реакции вылезали за границу */
+  overflow: visible;
+  background: transparent;
+}
+
+.msg-image-only-img {
+  display: block;
+  max-width: var(--image-max-w);
+  max-height: var(--image-max-h);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+}
+
+.msg-image-only-img:active {
+  transform: scale(0.99);
+}
+
+/* ===== Верхний оверлей: ник + метка пересылки ===== */
+
+.msg-image-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  min-height: 44px;
+  box-sizing: border-box;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.4) 60%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+/* [2.35.46] Метка пересылки внутри image-overlay */
+.msg-image-overlay .msg-forward-label {
+  margin-bottom: 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 10px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.msg-image-overlay .msg-forward-arrow {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.msg-image-overlay .msg-forward-nick,
+.msg-image-overlay .msg-forward-time {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.msg-nick--overlay {
+  color: #FFFFFF !important;
+  font-size: 13px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.msg-actions--overlay {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+  /* [2.31.6] сдвигаем чуть ниже, чтобы не конфликтовать с реакциями сверху */
+  margin-top: 22px;
+}
+
+.msg-action-btn--overlay {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border: 1.5px solid #111 !important;
+  color: #111 !important;
+  opacity: 1 !important;
+  padding: 2px 6px !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+}
+
+/* ===== Нижний оверлей: время справа ===== */
+
+.msg-image-bottom-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0 10px 6px;
+  box-sizing: border-box;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.6) 0%,
+    rgba(0, 0, 0, 0.25) 55%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.msg-time--bottom {
+  color: #FFFFFF !important;
+  font-size: 10px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+
+/* ============================================================= */
+/* [2.31.6] Реакции — правый верхний угол, выступают за границу   */
+/* ============================================================= */
+
+.msg-image-only-reactions {
+  position: absolute;
+  top: -14px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.image-only-reaction-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  position: relative;
+  padding: 0;
+  animation: imageOnlyReactionPop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.image-only-reaction-badge.own {
+  background: var(--btn-bg);
+  border-color: var(--btn-border);
+}
+
+.image-only-reaction-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--nick-color);
+  color: #FFF;
+  border: 2px solid var(--card-bg);
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+body.dark .image-only-reaction-count {
+  background: #3BB5E8;
+  color: #0E1726;
+}
+
+@keyframes imageOnlyReactionPop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  55%  { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ===== Мобильная версия ===== */
+@media (max-width: 600px) {
+  .msg--image-only {
+    --image-max-w: min(320px, 72vw);
+    --image-max-h: 40vh;
+
+    max-width: 100%;
+    width: fit-content;
+    gap: 6px;
+    margin-top: 10px;
+    margin-bottom: 6px;
+  }
+
+  .msg-content--image-only {
+    max-width: 100%;
+    width: auto;
+    gap: 4px;
+  }
+
+  .msg-image-overlay {
+    padding: 6px 10px;
+    min-height: 38px;
+  }
+
+  .msg-nick--overlay { font-size: 12px; }
+  .msg-time--bottom { font-size: 9px; }
+  .msg-action-btn--overlay {
+    padding: 2px 5px !important;
+    font-size: 10px !important;
+  }
+  .msg-actions--overlay {
+    margin-top: 20px;
+  }
+
+  /* [2.31.6] реакции — 28×28, чуть плотнее */
+  .msg-image-only-reactions {
+    top: -12px;
+    right: 4px;
+    gap: 3px;
+  }
+
+  .image-only-reaction-badge {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+    border-width: 1.5px;
+  }
+
+  .image-only-reaction-count {
+    min-width: 14px;
+    height: 14px;
+    font-size: 9px;
+    top: -5px;
+    right: -5px;
+    padding: 0 3px;
+  }
+}

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/mascot.png" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background: #F5A9C0;
+      color: #111111;
+      font-family: 'Segoe UI', 'Comic Sans MS', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body.dark {
+      background: #0E1726;
+      color: #EAF2FA;
+    }
+
+    #boot-splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background: #F5A9C0;
+      z-index: 99999;
+      transition: opacity 0.32s ease-out;
+      pointer-events: none;
+    }
+
+    body.dark #boot-splash {
+      background: #0E1726;
+    }
+
+    body.app-ready #boot-splash {
+      opacity: 0;
+    }
+
+    #boot-splash__inner {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 3px solid #111;
+      background: #FFF url('/mascot.png') center / cover no-repeat;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+      animation: bootPulse 1.2s ease-in-out infinite;
+    }
+
+    body.dark #boot-splash__inner {
+      border-color: #3BB5E8;
+    }
+
+    @keyframes bootPulse {
+
+      0%,
+      100% {
+        transform: scale(1);
+        opacity: 0.85;
+      }
+
+      50% {
+        transform: scale(1.05);
+        opacity: 1;
+      }
+    }
+
+    #boot-splash__status {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111;
+      opacity: 0;
+      transition: opacity 0.3s;
+      max-width: 280px;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    body.dark #boot-splash__status {
+      color: #EAF2FA;
+    }
+
+    #boot-splash__status.visible {
+      opacity: 0.85;
+    }
+
+    #boot-splash__reload {
+      display: none;
+      padding: 10px 22px;
+      border-radius: 20px;
+      background: #3BB5E8;
+      color: #FFF;
+      border: 3px solid #111;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.18);
+    }
+
+    #boot-splash__reload.visible {
+      display: block;
+    }
+
+    #root {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+
+  <meta name="theme-color" content="#F5A9C0" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="format-detection" content="telephone=no" />
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icon-512.png" />
+  <meta name="apple-mobile-web-app-title" content="crew" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <link rel="preconnect" href="https://api.banjoboy420.ru" crossorigin />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <link
+    href="https://fonts.googleapis.com/css2?family=Amatic+SC&family=Caveat&family=Cormorant+Garamond:wght@400;700&family=Marck+Script&family=Neucha&family=Pacifico&family=Unbounded:wght@400;700&display=block"
+    rel="stylesheet" media="print" onload="this.media='all'; this.onload=null;" />
+  <noscript>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Amatic+SC&family=Caveat&family=Cormorant+Garamond:wght@400;700&family=Marck+Script&family=Neucha&family=Pacifico&family=Unbounded:wght@400;700&display=block"
+      rel="stylesheet" />
+  </noscript>
+
+  <title>banjoboy's crew</title>
+</head>
+
+<body>
+  <div id="boot-splash" aria-hidden="true">
+    <div id="boot-splash__inner"></div>
+    <div id="boot-splash__status"></div>
+    <button id="boot-splash__reload" type="button">Перезагрузить</button>
+  </div>
+
+  <div id="root"></div>
+
+  <script>
+    (function () {
+      var ERROR_ENDPOINT = 'https://api.banjoboy420.ru/api/client-error';
+      var bootStart = Date.now();
+
+      try {
+        sessionStorage.setItem('boot-start-at', String(bootStart));
+      } catch (e) { /* noop */ }
+
+      function send(stage, message, stack) {
+        try {
+          var payload = JSON.stringify({
+            stage: String(stage || 'unknown').slice(0, 60),
+            message: String(message || '').slice(0, 500),
+            stack: String(stack || '').slice(0, 1500),
+            url: String(location.href || '').slice(0, 300),
+            ua: String(navigator.userAgent || '').slice(0, 300),
+            ver: (typeof window !== 'undefined' && window.__frontVersion) || 'unknown',
+            ts: Date.now(),
+          });
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(
+              ERROR_ENDPOINT,
+              new Blob([payload], { type: 'application/json' })
+            );
+          } else {
+            fetch(ERROR_ENDPOINT, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: payload,
+              keepalive: true,
+            }).catch(function () { /* noop */ });
+          }
+        } catch (e) { /* noop */ }
+      }
+
+      window.__clientLog = send;
+
+      // [2.37.2] Перехват console.error / console.warn.
+      // React 19 пишет ошибки рендера сюда, минуя window.onerror.
+      var origError = console.error;
+      var origWarn = console.warn;
+      var consoleBudget = 6;
+
+      function argsToString(args) {
+        try {
+          var parts = [];
+          for (var i = 0; i < args.length; i++) {
+            var a = args[i];
+            if (a instanceof Error) {
+              parts.push((a.message || '') + ' | ' + (a.stack || ''));
+            } else if (typeof a === 'string') {
+              parts.push(a);
+            } else {
+              try { parts.push(JSON.stringify(a)); }
+              catch (e) { parts.push(String(a)); }
+            }
+          }
+          return parts.join(' ');
+        } catch (e) {
+          return '[unserializable]';
+        }
+      }
+
+      console.error = function () {
+        try { origError.apply(console, arguments); } catch (e) { }
+        if (consoleBudget-- > 0) {
+          send('console.error', argsToString(arguments).slice(0, 1400));
+        }
+      };
+      console.warn = function () {
+        try { origWarn.apply(console, arguments); } catch (e) { }
+        if (consoleBudget-- > 0) {
+          send('console.warn', argsToString(arguments).slice(0, 1000));
+        }
+      };
+
+      window.addEventListener('error', function (e) {
+        var msg = e && e.message ? e.message : 'error';
+        var stack = '';
+        if (e && e.error && e.error.stack) stack = e.error.stack;
+        send('window.onerror', msg, stack);
+      }, true);
+
+      window.addEventListener('unhandledrejection', function (e) {
+        var reason = e && e.reason;
+        var msg = reason && reason.message ? reason.message : String(reason);
+        var stack = reason && reason.stack ? reason.stack : '';
+        send('unhandledrejection', msg, stack);
+      });
+
+      try {
+        if (localStorage.getItem('ghost-chat-theme') === 'dark') {
+          document.body.classList.add('dark');
+        }
+      } catch (e) { /* noop */ }
+
+      var splashEl = document.getElementById('boot-splash');
+      if (!splashEl) return;
+
+      var statusEl = document.getElementById('boot-splash__status');
+      var reloadEl = document.getElementById('boot-splash__reload');
+
+      setTimeout(function () {
+        if (document.body.classList.contains('app-ready')) return;
+        if (statusEl) {
+          statusEl.textContent = 'Долго грузится. Не закрывай…';
+          statusEl.classList.add('visible');
+        }
+        send('boot-timeout-8s', 'splash still visible after 8s');
+      }, 8000);
+
+      setTimeout(function () {
+        if (document.body.classList.contains('app-ready')) return;
+        if (statusEl) {
+          statusEl.textContent = 'Что-то пошло не так. Нажми кнопку ниже.';
+          statusEl.classList.add('visible');
+        }
+        if (reloadEl) reloadEl.classList.add('visible');
+        send('boot-timeout-20s', 'splash still visible after 20s');
+      }, 20000);
+
+      if (reloadEl) {
+        reloadEl.addEventListener('click', function () {
+          location.reload();
+        });
+      }
+
+      setTimeout(function () {
+        if (document.body.classList.contains('app-ready')) return;
+        var tried = false;
+        try { tried = sessionStorage.getItem('boot-auto-reload') === '1'; } catch (e) { }
+        if (tried) return;
+        try { sessionStorage.setItem('boot-auto-reload', '1'); } catch (e) { }
+        send('boot-timeout-40s', 'auto reload');
+        location.reload();
+      }, 40000);
+    })();
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>

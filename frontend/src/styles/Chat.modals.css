@@ -1,0 +1,1159 @@
+/* ===== Модальные окна и оверлеи ===== */
+
+.blur-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(17, 17, 17, 0.55);
+  z-index: 998;
+  touch-action: none;
+}
+
+body.dark .blur-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* ===== Auth modal ===== */
+.auth-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  width: 90%;
+  max-width: 360px;
+  z-index: 1000;
+  text-align: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.auth-modal h3 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.auth-modal input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--input-border);
+  margin: 8px 0;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text);
+  touch-action: manipulation;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.auth-modal input:focus {
+  border-color: var(--btn-bg);
+}
+
+.auth-modal .btn {
+  width: 100%;
+  margin-top: 8px;
+  touch-action: manipulation;
+  font-size: 14px;
+}
+
+.auth-switch {
+  margin-top: 10px;
+  cursor: pointer;
+  color: var(--nick-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.idle-notice {
+  font-size: 12px;
+  color: var(--nick-color);
+  margin-bottom: 8px;
+  opacity: 0;
+  transition: opacity 2s ease;
+}
+
+.idle-notice.visible { opacity: 1; }
+
+/* ===== Confirm modal ===== */
+.confirm-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  width: 90%;
+  max-width: 360px;
+  z-index: 1000;
+  text-align: center;
+}
+
+.confirm-modal-content h3 {
+  margin-top: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.confirm-modal-content p {
+  color: var(--text);
+  margin: 10px 0 20px;
+  font-size: 14px;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.confirm-btn { background: var(--btn-bg); }
+
+/* [2.32.40] danger-вариант confirm-кнопки — для бана/удаления */
+.confirm-btn--danger {
+  background: var(--danger);
+  border-color: var(--card-border);
+  color: #FFF;
+}
+
+.cancel-btn {
+  background: transparent;
+  border: 3px solid var(--card-border);
+  color: var(--text);
+}
+
+/* ============================================================= */
+/* Модалка разрешения уведомлений                                */
+/* ============================================================= */
+
+.notif-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 22px 20px 18px;
+  width: 90%;
+  max-width: 380px;
+  z-index: 1000;
+  text-align: center;
+  touch-action: none;
+  user-select: none;
+  animation: notifModalIn 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes notifModalIn {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.notif-modal-title {
+  margin: 6px 0 12px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  line-height: 1.25;
+}
+
+.notif-modal-text {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.notif-modal-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0 0 16px;
+  font-style: italic;
+}
+
+.notif-modal-allow {
+  width: 100%;
+  font-size: 14px;
+  padding: 12px 18px;
+  margin-bottom: 8px;
+}
+
+.notif-modal-later {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 10px;
+  touch-action: manipulation;
+  transition: color 0.15s;
+}
+
+.notif-modal-later:hover { color: var(--text); }
+.notif-modal-later:active { transform: scale(0.96); }
+
+/* ============================================================= */
+/* [2.32.30] Fullscreen — свайп через transform3d, GPU-слой      */
+/* ============================================================= */
+
+.fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  background: #0a0a0a;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+  animation: fsFadeIn 0.18s ease-out;
+  overflow: hidden;
+  will-change: background;
+}
+
+@keyframes fsFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ===== Шапка ===== */
+
+.fs-topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.4) 60%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  z-index: 3;
+}
+
+.fs-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.fs-author-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: #FFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+  background-size: cover !important;
+  background-position: center !important;
+}
+
+.fs-author-meta {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.fs-author-nick {
+  font-size: 14px;
+  font-weight: 800;
+  color: #FFFFFF;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.fs-author-date {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.fs-counter {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.fs-close {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #FFFFFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.fs-close:active {
+  transform: scale(0.9);
+  background: rgba(0, 0, 0, 0.75);
+}
+
+/* ===== Сцена ===== */
+
+.fs-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
+  touch-action: none;
+}
+
+.fs-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  cursor: default;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  animation: fsImageIn 0.24s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@keyframes fsImageIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ===== Стрелки (только для ПК) ===== */
+
+.fs-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFFFFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+  z-index: 4;
+  opacity: 0;
+}
+
+@media (pointer: fine) {
+  .fs-nav { opacity: 1; }
+  .fs-nav:hover { background: rgba(0, 0, 0, 0.8); transform: translateY(-50%) scale(1.05); }
+  .fs-nav:active { transform: translateY(-50%) scale(0.94); }
+}
+
+.fs-nav--prev { left: 14px; }
+.fs-nav--next { right: 14px; }
+
+.fs-nav:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+/* ===== Точки-индикатор ===== */
+
+.fs-dots {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 14px;
+  z-index: 4;
+  pointer-events: none;
+  max-width: 80vw;
+  overflow: hidden;
+}
+
+.fs-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  transition: width 0.25s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.2s;
+  flex-shrink: 0;
+}
+
+.fs-dot--active {
+  width: 20px;
+  border-radius: 3px;
+  background: #FFFFFF;
+}
+
+/* ===== Сердечко ===== */
+
+.fs-heart-burst {
+  position: absolute;
+  font-size: 84px;
+  line-height: 1;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: fsHeartBurst 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  z-index: 5;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+}
+
+@keyframes fsHeartBurst {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  35%  { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+  65%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+}
+
+/* ===== Нижняя панель ===== */
+
+.fs-bottombar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px calc(env(safe-area-inset-bottom, 0px) + 40px);
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.4) 60%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  z-index: 3;
+  pointer-events: none;
+  min-height: 90px;
+}
+
+.fs-bottombar > * {
+  pointer-events: auto;
+}
+
+.fs-reactions-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  max-width: calc(100% - 70px);
+  padding-bottom: 4px;
+}
+
+.fs-reaction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #FFFFFF;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s, background 0.15s;
+  user-select: none;
+}
+
+.fs-reaction-badge:active {
+  transform: scale(0.94);
+}
+
+.fs-reaction-badge.own {
+  background: #3BB5E8;
+  color: #0E1726;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.fs-reaction-badge-emoji {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.fs-reaction-badge-count {
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.fs-reaction-toggle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  color: #111;
+  border: 2px solid #111;
+  font-size: 26px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  transition: transform 0.12s, background 0.15s;
+}
+
+.fs-reaction-toggle:active,
+.fs-reaction-toggle.active {
+  transform: scale(0.92);
+  background: #FFFFFF;
+}
+
+/* ===== Список юзеров по эмодзи ===== */
+
+.fs-reaction-list {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 132px);
+  background: #FFFFFF;
+  border: 2px solid #111;
+  border-radius: var(--radius-md);
+  padding: 12px 14px 10px;
+  z-index: 7;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: fsReactionListIn 0.2s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes fsReactionListIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fs-reaction-list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #C7C7CC;
+}
+
+.fs-reaction-list-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.fs-reaction-list-count {
+  font-size: 14px;
+  font-weight: 800;
+  color: #111;
+}
+
+.fs-reaction-list-users {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.fs-reaction-user {
+  padding: 4px 10px;
+  background: #F2F2F7;
+  border: 1.5px solid #E5E5EA;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111;
+  white-space: nowrap;
+}
+
+.fs-reaction-list-close {
+  width: 100%;
+  padding: 8px 12px;
+  background: #F2F2F7;
+  border: 1.5px solid #E5E5EA;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 700;
+  color: #111;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.fs-reaction-list-close:active {
+  background: #E5E5EA;
+}
+
+/* ===== Дуэль ===== */
+.duel-box {
+  background: var(--duel-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-top: 8px;
+  color: var(--duel-text);
+  font-size: 13px;
+}
+
+.duel-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.duel-actions .btn {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.duel-notice {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 3px solid var(--btn-border);
+  padding: 10px 18px;
+  border-radius: 20px;
+  z-index: 1000;
+  animation: fadeInUp 0.2s;
+  touch-action: none;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ===== Уведомления ===== */
+.join-notices {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 20;
+  pointer-events: none;
+  align-items: flex-end;
+}
+
+.join-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card-bg);
+  border: 2px solid var(--card-border);
+  border-radius: 24px;
+  padding: 4px 12px 4px 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  max-width: 220px;
+  animation:
+    noticeIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+    noticeOut 0.4s ease-in 3.6s forwards;
+}
+
+.join-notice-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: #FFF;
+  border: 1.5px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+.join-notice-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes noticeIn {
+  from {
+    opacity: 0;
+    transform: translateX(30px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes noticeOut {
+  to {
+    opacity: 0;
+    transform: translateX(30px) scale(0.9);
+  }
+}
+
+/* ===== Баннер установки PWA ===== */
+
+.pwa-banner-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.55);
+  z-index: 2400;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  animation: pwaBannerOverlayIn 0.2s ease-out;
+}
+
+body.dark .pwa-banner-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+@keyframes pwaBannerOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.pwa-banner {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 18px 16px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+  animation: pwaBannerIn 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@keyframes pwaBannerIn {
+  0%   { opacity: 0; transform: translateY(24px) scale(0.96); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pwa-banner-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.25;
+}
+
+.pwa-banner-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--messages-bg);
+  border: 2px solid var(--card-border);
+  border-radius: var(--radius-md);
+}
+
+.pwa-banner-step-num {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 2px solid var(--card-border);
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwa-banner-step-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.pwa-banner-step-text b {
+  color: var(--nick-color);
+  font-weight: 800;
+}
+
+.pwa-banner-share-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  color: var(--nick-color);
+}
+
+.pwa-banner-ok {
+  margin-top: 4px;
+  padding: 12px 18px;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 3px solid var(--btn-border);
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.1s;
+}
+
+.pwa-banner-ok:active {
+  transform: scale(0.97);
+}
+
+/* ============================================================= */
+/* [2.35.45] Меню действий над сообщением — только иконки         */
+/* ============================================================= */
+
+.msg-actions-menu {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  pointer-events: auto;
+  animation: msgActionsMenuIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes msgActionsMenuIn {
+  0%   { opacity: 0; transform: translateY(6px) scale(0.9); }
+  60%  { opacity: 1; transform: translateY(-2px) scale(1.04); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.msg-actions-menu-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2.5px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  transition: transform 0.12s, background 0.15s, border-color 0.15s;
+}
+
+.msg-actions-menu-btn:hover {
+  background: var(--messages-bg);
+}
+
+.msg-actions-menu-btn:active {
+  transform: scale(0.9);
+}
+
+.msg-actions-menu-btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+body.dark .msg-actions-menu-btn {
+  border-color: #2C3E5A;
+}
+
+body.dark .msg-actions-menu-btn--danger {
+  border-color: #F87171;
+  color: #F87171;
+}
+
+.msg-actions-menu-icon {
+  font-size: 20px;
+  line-height: 1;
+  display: block;
+}
+
+/* ============================================================= */
+/* [2.35.45] Метка «Переслано от X»                               */
+/* ============================================================= */
+
+.msg-forward-label,
+.private-msg-forward-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+  line-height: 1.15;
+  letter-spacing: 0.2px;
+  max-width: 100%;
+  opacity: 0.9;
+}
+
+.msg-forward-arrow,
+.private-msg-forward-arrow {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--btn-bg);
+  line-height: 1;
+}
+
+.msg-forward-nick,
+.private-msg-forward-nick {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.msg-forward-time,
+.private-msg-forward-time {
+  font-weight: 500;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.msg-image-only-forward {
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  display: inline-flex;
+}
+
+body.dark .msg-image-only-forward {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ============================================================= */
+/* [2.35.45] Модалка выбора получателя для пересылки              */
+/* ============================================================= */
+
+.forward-picker {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  background: var(--card-bg);
+  border: 3px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 16px 16px 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: forwardPickerIn 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes forwardPickerIn {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.forward-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.forward-picker-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.forward-picker-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  border: 2px solid var(--card-border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+  transition: transform 0.12s;
+}
+.forward-picker-close:active {
+  transform: scale(0.9);
+}
+
+.forward-picker-search {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.forward-picker-search::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.forward-picker-search:focus {
+  border-color: var(--btn-bg);
+  box-shadow: 0 0 0 3px rgba(59, 181, 232, 0.2);
+}
+
+.forward-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.forward-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  touch-action: manipulation;
+  transition: background 0.12s, border-color 0.12s;
+}
+.forward-picker-item:hover {
+  background: var(--messages-bg);
+}
+.forward-picker-item:active {
+  transform: scale(0.98);
+  background: var(--messages-bg);
+}
+
+.forward-picker-item--general {
+  border-bottom: 1px solid var(--card-border);
+  border-radius: 0;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+}
+
+.forward-picker-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: #FFF;
+  border: 2px solid var(--card-border);
+  flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.forward-picker-avatar--general {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 20px;
+}
+
+.forward-picker-nick {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.forward-picker-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+body.dark .forward-picker-avatar {
+  border-color: #2C3E5A;
+}
