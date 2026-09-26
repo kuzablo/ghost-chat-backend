@@ -32,4 +32,6 @@
 //          Свои контролы (mute, 😀, реакции), свайп вниз — закрыть.
 // [2.50.8] feat(private): реакции на фото в личке — fullscreen
 //          с кнопкой 😀 и ReactionWheel.
-export const VERSION = '2.50.8';
+// [2.50.9] feat(private): реакции на фото в личке — правый верхний
+//          угол, выступают за границу, как .msg-image-only-reactions.
+export const VERSION = '2.50.9';

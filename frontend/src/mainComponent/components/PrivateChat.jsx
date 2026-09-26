@@ -930,20 +930,37 @@ const PrivateChat = ({
                     >
                       <div className="private-msg-text-wrap">
                         {forwardLabel}
-                        {m.imageUrl && (
-                          <SmartImage
-                            src={m.imageUrl}
-                            alt="photo"
-                            wrapperClassName="private-msg-image-smart"
-                            imgClassName="private-msg-image"
-                            draggable={false}
-                            onClick={(e) => { e.stopPropagation(); setFullscreenImage({ url: m.imageUrl, messageId: m.id }); }}
-                          />
-                        )}
+                        {m.imageUrl ? (
+                          <div className="private-msg-image-wrap">
+                            <SmartImage
+                              src={m.imageUrl}
+                              alt="photo"
+                              wrapperClassName="private-msg-image-smart"
+                              imgClassName="private-msg-image"
+                              draggable={false}
+                              onClick={(e) => { e.stopPropagation(); setFullscreenImage({ url: m.imageUrl, messageId: m.id }); }}
+                            />
+                            {hasReactions && (
+                              <div className="private-msg-image-reactions">
+                                {reactionEntries.map(([emoji, users]) => (
+                                  <span
+                                    key={`${emoji}-${users.length}`}
+                                    className={`private-image-reaction-badge ${users.includes(myId) ? 'own' : ''}`}
+                                  >
+                                    {emoji}
+                                    {users.length > 1 && (
+                                      <span className="private-image-reaction-count">{users.length}</span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
                         {m.text && <span className="private-msg-text">{m.text}</span>}
                         {igUrl && <InstagramCard url={igUrl} />}
 
-                        {hasReactions && (
+                        {!m.imageUrl && hasReactions && (
                           <div className="private-msg-reactions">
                             {reactionEntries.map(([emoji, users]) => (
                               <span key={`${emoji}-${users.length}`} className={`private-reaction-badge ${users.includes(myId) ? 'own' : ''}`}>
