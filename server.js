@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.5';
+const VERSION = '2.28.6';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -1092,6 +1092,7 @@ const mapMessageRow = (row) => ({
   videoUrl: row.video_url || null,
   videoDuration: row.video_duration != null ? Number(row.video_duration) : null,
   videoMime: row.video_mime || null,
+  isCircle: row.is_circle === true,
   time: Number(row.time),
   reactions: row.reactions || {},
   replyTo: row.reply_to || null,
@@ -1140,6 +1141,7 @@ async function getPrivateHistory(userId1, userId2) {
     videoUrl: msg.video_url || null,
     videoDuration: msg.video_duration != null ? Number(msg.video_duration) : null,
     videoMime: msg.video_mime || null,
+    isCircle: msg.is_circle === true,
   }));
 }
 
@@ -1633,7 +1635,7 @@ wss.on('connection', ws => {
       switch (msg.type) {
         // ===== ОСНОВНОЙ ЧАТ =====
         case 'message': {
-          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime } = msg.data;
+          const { text, imageUrl, stickerUrl, replyTo, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime, isCircle } = msg.data;
 
           if (!checkRate(current.userId)) {
             sendTo(ws, { type: 'admin_error', data: { message: 'Слишком часто. Подожди пару секунд.' } });
@@ -1713,6 +1715,7 @@ wss.on('connection', ws => {
             video_url: safeVideoUrl,
             video_duration: safeVideoDuration,
             video_mime: safeVideoMime,
+            is_circle: safeVideoUrl ? isCircle === true : false,
           };
 
           const { error } = await supabaseAdmin.from('messages').insert([row]);
@@ -1989,7 +1992,7 @@ wss.on('connection', ws => {
 
         // ===== ЛИЧНЫЕ СООБЩЕНИЯ =====
         case 'private_message': {
-          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime } = msg.data;
+          const { recipientId, text, imageUrl, stickerUrl, forwardedFrom, voiceUrl, voiceDuration, voiceWaveform, videoUrl, videoDuration, videoMime, isCircle } = msg.data;
           if (!recipientId || (!text && !imageUrl && !stickerUrl && !voiceUrl && !videoUrl)) break;
           if (recipientId === current.userId) break;
 
@@ -2076,6 +2079,7 @@ wss.on('connection', ws => {
               video_url: safeVideoUrl,
               video_duration: safeVideoDuration,
               video_mime: safeVideoMime,
+              is_circle: safeVideoUrl ? isCircle === true : false,
             }])
             .select()
             .single();
@@ -2104,6 +2108,7 @@ wss.on('connection', ws => {
             videoUrl: savedMessage.video_url,
             videoDuration: savedMessage.video_duration != null ? Number(savedMessage.video_duration) : null,
             videoMime: savedMessage.video_mime || null,
+            isCircle: savedMessage.is_circle === true,
           };
 
           sendTo(ws, { type: 'private_message_sent', data: messageForClient });
