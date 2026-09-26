@@ -781,3 +781,8 @@ body.dark .private-loading-mascot {
   background: transparent;
   border: none;
 }
+
+/* [2.50.4] Реакции на видео в личке — контейнер должен быть позиционирован. */
+.private-msg--video {
+  position: relative;
+}

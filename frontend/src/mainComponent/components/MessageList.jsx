@@ -414,6 +414,7 @@ const MessageList = ({
     if (swipeActiveRef.current) return;
     if (Date.now() - longPressRef.current.completedAt < LONG_PRESS_IGNORE_MS) return;
     if (e.target.closest('.video-msg')) return;
+    if (e.target.closest('.video-attachment')) return;
     if (e.target.closest('.voice-msg')) return;
     handleMessageTap(m.id, e);
   };
@@ -615,6 +616,21 @@ const MessageList = ({
                       />
                     ) : (
                       <VideoAttachment url={m.videoUrl} isOwn={isOwn} />
+                    )}
+                    {hasReactions(m) && (
+                      <div className="msg-video-reactions">
+                        {Object.entries(m.reactions).map(([emoji, users]) => (
+                          <span
+                            key={emoji}
+                            className={`msg-video-reaction-badge ${users.includes(nickname) ? 'own' : ''}`}
+                          >
+                            {emoji}
+                            {users.length > 1 && (
+                              <span className="msg-video-reaction-count">{users.length}</span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
                     )}
                     {hasReactions(m) && (
                       <div className="msg-video-reactions">

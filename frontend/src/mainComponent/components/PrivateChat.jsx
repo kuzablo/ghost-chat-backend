@@ -503,6 +503,7 @@ const PrivateChat = ({
     if (e.target.closest('.private-msg-sticker')) return;
     if (e.target.closest('.voice-msg')) return;
     if (e.target.closest('.video-msg')) return;
+    if (e.target.closest('.video-attachment')) return;
 
     if (pickerFor === id) { setPickerFor(null); return; }
 
@@ -885,9 +886,14 @@ const PrivateChat = ({
                         {m.reactions && Object.keys(m.reactions).length > 0 && (
                           <div className="msg-video-reactions">
                             {Object.entries(m.reactions).map(([emoji, users]) => (
-                              <span key={emoji} className={`msg-video-reaction-badge ${users.includes(myId) ? 'own' : ''}`}>
+                              <span
+                                key={emoji}
+                                className={`msg-video-reaction-badge ${users.includes(myId) ? 'own' : ''}`}
+                              >
                                 {emoji}
-                                {users.length > 1 && <span className="msg-video-reaction-count">{users.length}</span>}
+                                {users.length > 1 && (
+                                  <span className="msg-video-reaction-count">{users.length}</span>
+                                )}
                               </span>
                             ))}
                           </div>
