@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.3';
+const VERSION = '2.28.4';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -70,12 +70,14 @@ function formatCooldownLeft(msLeft) {
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAdmin = serviceRoleKey
-  ? createClient(supabaseUrl, serviceRoleKey)
-  : supabase;
+
+// [2.28.4] Единый клиент через service_role — он обходит RLS.
+// Раньше часть запросов шла через anon-ключ. После включения RLS
+// на users/private_messages/friends/blocks они бы упали. Теперь
+// весь бэк работает под service_role, RLS включён на всех таблицах.
+const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey || supabaseKey);
+const supabase = supabaseAdmin;
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
