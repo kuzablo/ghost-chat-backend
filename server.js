@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.6';
+const VERSION = '2.28.7';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -835,7 +835,7 @@ app.post('/api/login', async (req, res) => {
   const token = jwt.sign(
     { userId: user.id, nickname: user.nickname, role: user.role },
     JWT_SECRET,
-    { EXPIRESIN: '30D' }
+    { expiresIn: '30d' }
   );
   res.json({ token, nickname: user.nickname, role: user.role });
 });
