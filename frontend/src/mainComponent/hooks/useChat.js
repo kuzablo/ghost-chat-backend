@@ -34,6 +34,7 @@ export const useChat = ({
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isVideoFileUploading, setIsVideoFileUploading] = useState(false);
   const [hiddenUnread, setHiddenUnread] = useState(0);
   const [replyTo, setReplyTo] = useState(null);
   const [profileData, setProfileData] = useState(null);
@@ -217,6 +218,7 @@ export const useChat = ({
     }
 
     setIsUploading(true);
+    if (isVideo) setIsVideoFileUploading(true);
     const formData = new FormData();
     formData.append('file', file);
 
@@ -256,6 +258,7 @@ export const useChat = ({
       setErrorMessage('Не удалось загрузить: ' + (err?.message || ''));
     } finally {
       setIsUploading(false);
+      setIsVideoFileUploading(false);
     }
   }, []);
 
@@ -603,6 +606,7 @@ export const useChat = ({
     setInput,
     sending,
     isUploading,
+    isVideoFileUploading,
     hiddenUnread,
     setHiddenUnread,
     replyTo,

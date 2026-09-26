@@ -382,6 +382,7 @@ const Chat = () => {
     setInput,
     sending,
     isUploading,
+    isVideoFileUploading,
     hiddenUnread,
     setHiddenUnread,
     replyTo,
@@ -1434,7 +1435,7 @@ const Chat = () => {
   const isBusySending = isUploading || voiceUploading || videoUploading;
   const sendingLabel = voiceUploading
     ? 'Отправляем голосовое'
-    : videoUploading
+    : (videoUploading || isVideoFileUploading)
       ? 'Отправляем видео'
       : isUploading
         ? 'Отправляем фото'
@@ -1836,7 +1837,7 @@ const Chat = () => {
                 onChange={(text) => handleInputChange({ target: { value: text } })}
                 onSend={handleSendMessage}
                 disabled={!isAuth || isUploading}
-                placeholder={isUploading ? 'Загрузка фото...' : 'Сообщение'}
+                placeholder={isUploading ? (isVideoFileUploading ? 'Загрузка видео...' : 'Загрузка фото...') : 'Сообщение'}
                 maxLength={2000}
                 onFocusChange={setInputFocused}
               />
@@ -1899,7 +1900,11 @@ const Chat = () => {
           <div className="status">
             {bannedUntil && ` — бан до ${new Date(bannedUntil).toLocaleTimeString()}`}
             {errorMessage && <div style={{ color: 'var(--danger)', marginTop: 4 }}>{errorMessage}</div>}
-            {isUploading && <div style={{ color: 'var(--btn-bg)', marginTop: 4 }}>Загрузка фото...</div>}
+            {isUploading && (
+              <div style={{ color: 'var(--btn-bg)', marginTop: 4 }}>
+                {isVideoFileUploading ? 'Загрузка видео...' : 'Загрузка фото...'}
+              </div>
+            )}
           </div>
 
           <DuelBox

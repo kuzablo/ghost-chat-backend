@@ -98,6 +98,7 @@ const PrivateChat = ({
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [poppingId, setPoppingId] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isVideoFileUploading, setIsVideoFileUploading] = useState(false);
   const [voiceUploading, setVoiceUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -441,6 +442,7 @@ const PrivateChat = ({
     }
 
     setIsUploading(true);
+    if (isVideo) setIsVideoFileUploading(true);
     setUploadError('');
     try {
       const fd = new FormData();
@@ -478,6 +480,7 @@ const PrivateChat = ({
       setTimeout(() => setUploadError(''), 4000);
     } finally {
       setIsUploading(false);
+      setIsVideoFileUploading(false);
     }
   };
 
@@ -729,7 +732,7 @@ const PrivateChat = ({
   const isBusySending = isUploading || voiceUploading || videoUploading;
   const sendingLabel = voiceUploading
     ? 'Отправляем голосовое'
-    : videoUploading
+    : (videoUploading || isVideoFileUploading)
       ? 'Отправляем видео'
       : 'Отправляем фото';
 
