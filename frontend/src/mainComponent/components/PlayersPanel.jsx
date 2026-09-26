@@ -1,10 +1,12 @@
-import { forwardRef, useState, useRef, useEffect, memo } from 'react';
+import { forwardRef, useState, useRef, useEffect, useMemo, memo } from 'react';
 import { getAvatarColor, getInitial } from '../utils';
 import StickerMenu from './StickerMenu';
 import OrbitNotification from './OrbitNotification';
 import Avatar from './Avatar';
 
 /*
+  [2.52.0] Секция «Онлайн» ограничена двумя записями (скролл внутри).
+           Друзья сортируются: онлайн — вверх.
   [2.48.5] Скролл — у секций «Онлайн», «Друзья», «Запросы».
            Шапка/поиск/я/«О приложении» — зафиксированы.
   [2.39.0] Узел орбиты в шапке рендерится всегда.
@@ -56,15 +58,26 @@ const PlayersPanel = forwardRef(({
 }, ref) => {
   const isFriendOnline = (friendId) => players.some(p => p.userId === friendId);
 
+  const q = searchQuery.toLowerCase();
+
   const filteredPlayers = players.filter(p =>
-    p.nickname.toLowerCase().includes(searchQuery.toLowerCase())
+    p.nickname.toLowerCase().includes(q)
   );
 
   const friendIds = new Set(friends.map(f => f.userId));
   const nonFriends = filteredPlayers.filter(p => !friendIds.has(p.userId) && p.userId !== myId);
-  const filteredFriends = friends.filter(f =>
-    f.nickname.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+
+  // [2.52.0] Друзья: онлайн — вверх, остальные сохраняют исходный порядок.
+  const filteredFriends = useMemo(() => {
+    const list = friends.filter(f => f.nickname.toLowerCase().includes(q));
+    return [...list].sort((a, b) => {
+      const aOn = isFriendOnline(a.userId) ? 0 : 1;
+      const bOn = isFriendOnline(b.userId) ? 0 : 1;
+      return aOn - bOn;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [friends, q, players]);
+
   const myself = players.find(p => p.userId === myId);
 
   const unreadDialogs = Object.values(unreadByUser || {}).filter(Boolean).length;
@@ -254,7 +267,6 @@ const PlayersPanel = forwardRef(({
           </div>
         )}
 
-        {/* [2.39.0] Узел орбиты рендерится всегда. Ref валиден в любой момент */}
         <div
           ref={orbitSlotRef}
           className="players-header players-header--orbit"
@@ -325,7 +337,7 @@ const PlayersPanel = forwardRef(({
 
           {/* ===== Онлайн ===== */}
           {nonFriends.length > 0 && (
-            <div className="players-section">
+            <div className="players-section players-section--online">
               <div className="friends-header">Онлайн ({nonFriends.length})</div>
               <div className="players-section-scroll">
                 {nonFriends.map(p => {

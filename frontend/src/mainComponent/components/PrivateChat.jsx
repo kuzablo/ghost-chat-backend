@@ -19,10 +19,11 @@ import { useVoiceRecorder, extFromMime } from '../hooks/useVoiceRecorder';
 import { useVideoRecorder, extFromVideoMime } from '../hooks/useVideoRecorder';
 
 /*
-  [2.46.0] Авто-выбор фильтра по дате при первом открытии: если последнее
-           сообщение сегодня → «Сегодня», если за последние 7 дней → «7 дней»,
-           за 30 дней → «30 дней», иначе «Всё». Стрелка скролла теперь
-           привязана к .private-messages-wrap — всегда над лентой, не съезжает.
+  [2.51.0] Фильтр «Вчера». Диапазоны from/to. Авто-выбор учитывает вчера.
+  [2.50.9] Реакции на фото — правый верхний угол, выступают за границу.
+  [2.50.6] Кружки от камеры с isCircle: true.
+  [2.50.4] Реакции на фото в личке, fullscreen с кнопкой 😀.
+  [2.46.0] Авто-выбор фильтра по дате при первом открытии.
   [2.45.0] Avatar с маскот-плейсхолдером.
   [2.44.0] SmartImage для фото.
   [2.43.0] SendingIndicator вместо строки ввода на время upload.
@@ -32,7 +33,6 @@ import { useVideoRecorder, extFromVideoMime } from '../hooks/useVideoRecorder';
 
 const MAX_UPLOAD_MB = 25;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
-// [2.50.0] Видео-файлы — 100 МБ.
 const MAX_VIDEO_MB = 100;
 const MAX_VIDEO_BYTES = MAX_VIDEO_MB * 1024 * 1024;
 const API_URL = 'https://api.banjoboy420.ru';
@@ -42,12 +42,14 @@ const SWIPE_MAX = 220;
 const DIRECTION_LOCK = 10;
 const LONG_PRESS_MENU_MS = 500;
 const LONG_PRESS_IGNORE_MS = 500;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DATE_FILTERS = [
-  { id: 'all', label: 'Всё', days: null },
-  { id: 'today', label: 'Сегодня', days: 0 },
-  { id: '7d', label: '7 дней', days: 7 },
-  { id: '30d', label: '30 дней', days: 30 },
+  { id: 'all', label: 'Всё', range: null },
+  { id: 'today', label: 'Сегодня', range: 'today' },
+  { id: 'yesterday', label: 'Вчера', range: 'yesterday' },
+  { id: '7d', label: '7 дней', range: '7d' },
+  { id: '30d', label: '30 дней', range: '30d' },
 ];
 
 const StickerIcon = () => (
@@ -74,12 +76,24 @@ const getBgCss = (bg) => {
 
 const isUrlBg = (bg) => !!(bg && bg.startsWith('url:'));
 
-const getSinceTs = (days) => {
-  if (days === null) return null;
+// [2.51.0] Диапазон фильтра. null — без ограничений.
+// from — включительно, to — исключительно. Полуночи локальные.
+const getRange = (range) => {
+  if (!range) return null;
   const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  d.setDate(d.getDate() - days);
-  return d.getTime();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  switch (range) {
+    case 'today':
+      return { from: todayStart, to: null };
+    case 'yesterday':
+      return { from: todayStart - DAY_MS, to: todayStart };
+    case '7d':
+      return { from: todayStart - 7 * DAY_MS, to: null };
+    case '30d':
+      return { from: todayStart - 30 * DAY_MS, to: null };
+    default:
+      return null;
+  }
 };
 
 const PrivateChat = ({
@@ -162,11 +176,14 @@ const PrivateChat = ({
   const filteredMessages = useMemo(() => {
     const filter = DATE_FILTERS.find(f => f.id === dateFilter);
     let list = initialMessages;
-    if (filter && filter.days !== null) {
-      const since = getSinceTs(filter.days);
+    const range = filter ? getRange(filter.range) : null;
+    if (range) {
       list = list.filter(m => {
         if (!m.created_at) return false;
-        return new Date(m.created_at).getTime() >= since;
+        const t = new Date(m.created_at).getTime();
+        if (t < range.from) return false;
+        if (range.to !== null && t >= range.to) return false;
+        return true;
       });
     }
     const q = searchQuery.trim().toLowerCase();
@@ -174,7 +191,7 @@ const PrivateChat = ({
     return list;
   }, [initialMessages, dateFilter, searchQuery]);
 
-  // [2.46.0] Авто-выбор фильтра по дате: один раз, при первой загрузке.
+  // Авто-выбор фильтра по дате: один раз, при первой загрузке.
   // Если пользователь потом выберет сам — не перебиваем.
   useEffect(() => {
     if (autoFilterAppliedRef.current) return;
@@ -184,8 +201,9 @@ const PrivateChat = ({
 
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000;
-    const monthStart = todayStart - 30 * 24 * 60 * 60 * 1000;
+    const yesterdayStart = todayStart - DAY_MS;
+    const weekStart = todayStart - 7 * DAY_MS;
+    const monthStart = todayStart - 30 * DAY_MS;
 
     const latest = initialMessages.reduce((max, m) => {
       const t = m.created_at ? new Date(m.created_at).getTime() : 0;
@@ -194,6 +212,7 @@ const PrivateChat = ({
 
     if (!latest) return;
     if (latest >= todayStart) setDateFilter('today');
+    else if (latest >= yesterdayStart) setDateFilter('yesterday');
     else if (latest >= weekStart) setDateFilter('7d');
     else if (latest >= monthStart) setDateFilter('30d');
     else setDateFilter('all');
@@ -801,8 +820,6 @@ const PrivateChat = ({
           {localTypingUser ? `${localTypingUser} печатает...` : ''}
         </div>
 
-        {/* [2.46.0] Обёртка вокруг messages + стрелка — стрелка привязана
-            к .private-messages-wrap, а не к overlay. Не съезжает. */}
         <div className="private-messages-wrap">
           <div className="private-messages" ref={messagesContainerRef}>
             {showBgLoading || !historyLoaded ? (
