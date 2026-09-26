@@ -22,6 +22,7 @@ const Avatar = memo(({
   onClick = null,
   alt = '',
   children = null,
+  ...rest
 }) => {
   const [status, setStatus] = useState(src ? 'loading' : 'letter');
   const imgRef = useRef(null);
@@ -51,6 +52,7 @@ const Avatar = memo(({
       className={`${className} avatar-host`.trim()}
       style={{ ...(bgStyle || {}), ...(style || {}) }}
       onClick={onClick || undefined}
+      {...rest}
     >
       {status === 'loading' && (
         <span className="avatar-mascot-fill" aria-hidden="true" />

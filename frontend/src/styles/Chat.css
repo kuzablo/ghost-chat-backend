@@ -2039,7 +2039,7 @@ body.dark .voice-rec-wave-col {
    но с круглым радиусом и меньшей длительностью. */
 .msg-avatar-hold-ring {
   position: absolute;
-  inset: -3px;
+  inset: 0;
   border-radius: 50%;
   pointer-events: none;
   z-index: 5;
