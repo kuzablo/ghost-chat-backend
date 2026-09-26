@@ -1732,6 +1732,7 @@ const Chat = () => {
               containerRef={messagesContainerRef}
               onReply={handleReply}
               onForward={handleForwardOpen}
+              onOpenProfile={handleOpenProfile}
               avatarByUser={avatarCache}
               bannedUsers={bannedUsers}
               favoriteStickers={favoriteStickers}

@@ -162,6 +162,12 @@ body.dark .players-bg-loading-mascot {
   flex-direction: column;
 }
 
+/* [2.52.0] Секция «Онлайн» — не более двух записей. Остальные в скролле. */
+.players-section--online {
+  flex: 0 1 auto;
+  max-height: 130px;
+}
+
 .players-section--requests {
   flex: 0 1 auto;
   max-height: 22vh;

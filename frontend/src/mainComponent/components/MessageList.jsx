@@ -11,6 +11,8 @@ import Avatar from './Avatar';
 
 const DOUBLE_TAP_MS = 250;
 const LONG_PRESS_MENU_MS = 500;
+const AVATAR_LONG_PRESS_MS = 250;
+const AVATAR_MOVE_CANCEL_PX = 8;
 
 const MessageList = ({
   messages,
@@ -28,6 +30,7 @@ const MessageList = ({
   containerRef,
   onReply,
   onForward,
+  onOpenProfile,
   avatarByUser = {},
   bannedUsers = new Set(),
   favoriteStickers = [],
@@ -42,6 +45,7 @@ const MessageList = ({
   const [poppingId, setPoppingId] = useState(null);
   const [actionsMenu, setActionsMenu] = useState(null);
   const [pickerAnchor, setPickerAnchor] = useState(null);
+  const [avatarRingId, setAvatarRingId] = useState(null);
 
   const swipeRef = useRef({
     active: false,
@@ -61,20 +65,24 @@ const MessageList = ({
   const LONG_PRESS_IGNORE_MS = 500;
   const RING_START_DELAY = 200;
 
+  const avatarRingRef = useRef({ timer: null, startX: 0, startY: 0, activeId: null });
+
   const tapTimerRef = useRef(null);
   const lastTapRef = useRef({ id: null, time: 0, x: 0, y: 0 });
   const [heartBurst, setHeartBurst] = useState(null);
 
   const editTextareaRef = useRef(null);
 
-  // [2.46.0] Множество url избранных стикеров — для быстрой проверки
   const favoriteSet = useMemo(
     () => new Set(Array.isArray(favoriteStickers) ? favoriteStickers : []),
     [favoriteStickers]
   );
 
   useEffect(() => {
-    return () => { if (tapTimerRef.current) clearTimeout(tapTimerRef.current); };
+    return () => {
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+      if (avatarRingRef.current.timer) clearTimeout(avatarRingRef.current.timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -249,7 +257,6 @@ const MessageList = ({
   };
 
   const buildStorageData = (m) => {
-    // Определяем тип по содержимому
     let type = 'text';
     if (m.stickerUrl) type = 'sticker';
     else if (m.videoUrl) type = 'video';
@@ -419,16 +426,69 @@ const MessageList = ({
     handleMessageTap(m.id, e);
   };
 
-  const renderMsgAvatar = (userId, nick) => {
+  // ===== AVATAR LONG-PRESS → ПРОФИЛЬ =====
+
+  const handleAvatarTouchStart = (e, msgId, userId, nick) => {
+    if (e.touches.length !== 1) return;
+    if (!onOpenProfile) return;
+    if (!userId) return;
+    const t = e.touches[0];
+    avatarRingRef.current.startX = t.clientX;
+    avatarRingRef.current.startY = t.clientY;
+    avatarRingRef.current.activeId = msgId;
+
+    setAvatarRingId(msgId);
+    if (avatarRingRef.current.timer) clearTimeout(avatarRingRef.current.timer);
+    avatarRingRef.current.timer = setTimeout(() => {
+      avatarRingRef.current.timer = null;
+      setAvatarRingId(null);
+      avatarRingRef.current.activeId = null;
+      onOpenProfile(userId, nick);
+    }, AVATAR_LONG_PRESS_MS);
+  };
+
+  const handleAvatarTouchMove = (e) => {
+    if (!avatarRingRef.current.timer) return;
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - avatarRingRef.current.startX);
+    const dy = Math.abs(t.clientY - avatarRingRef.current.startY);
+    if (dx > AVATAR_MOVE_CANCEL_PX || dy > AVATAR_MOVE_CANCEL_PX) {
+      if (avatarRingRef.current.timer) {
+        clearTimeout(avatarRingRef.current.timer);
+        avatarRingRef.current.timer = null;
+      }
+      setAvatarRingId(null);
+      avatarRingRef.current.activeId = null;
+    }
+  };
+
+  const handleAvatarTouchEnd = () => {
+    if (avatarRingRef.current.timer) {
+      clearTimeout(avatarRingRef.current.timer);
+      avatarRingRef.current.timer = null;
+    }
+    setAvatarRingId(null);
+    avatarRingRef.current.activeId = null;
+  };
+
+  const renderMsgAvatar = (userId, nick, msgId) => {
     const url = avatarByUser[userId];
     const isBanned = bannedUsers.has(userId);
+    const isRingOn = avatarRingId === msgId;
     return (
       <Avatar
         src={url}
         nickname={nick}
         className={`msg-avatar${isBanned ? ' msg-avatar--banned' : ''}`}
         alt=""
+        onTouchStart={(e) => handleAvatarTouchStart(e, msgId, userId, nick)}
+        onTouchMove={handleAvatarTouchMove}
+        onTouchEnd={handleAvatarTouchEnd}
+        onTouchCancel={handleAvatarTouchEnd}
+        onContextMenu={(e) => e.preventDefault()}
       >
+        {isRingOn && <span className="msg-avatar-hold-ring" aria-hidden="true" />}
         {isBanned && <span className="msg-avatar-banned-badge" aria-hidden="true">🚫</span>}
       </Avatar>
     );
@@ -508,6 +568,7 @@ const MessageList = ({
               <React.Fragment key={m.id}>
                 {dateDivider}
                 <div className={`msg msg--sticker ${isOwn ? 'msg--own' : 'msg--other'}`} data-msg-id={m.id}>
+                  {renderMsgAvatar(m.userId, m.nickname, m.id)}
                   <div className="msg-swipe-glow msg-swipe-glow--reply" />
                   <div className="msg-swipe-glow msg-swipe-glow--delete" />
                   <div
@@ -558,6 +619,7 @@ const MessageList = ({
               <React.Fragment key={m.id}>
                 {dateDivider}
                 <div className={`msg msg--voice-only ${isOwn ? 'msg--own' : 'msg--other'}`} data-msg-id={m.id}>
+                  {renderMsgAvatar(m.userId, m.nickname, m.id)}
                   <div className="msg-swipe-glow msg-swipe-glow--reply" />
                   <div className="msg-swipe-glow msg-swipe-glow--delete" />
                   <div
@@ -590,6 +652,7 @@ const MessageList = ({
               <React.Fragment key={m.id}>
                 {dateDivider}
                 <div className={`msg msg--video-only ${isOwn ? 'msg--own' : 'msg--other'}`} data-msg-id={m.id}>
+                  {renderMsgAvatar(m.userId, m.nickname, m.id)}
                   <div className="msg-swipe-glow msg-swipe-glow--reply" />
                   <div className="msg-swipe-glow msg-swipe-glow--delete" />
                   <div
@@ -650,7 +713,7 @@ const MessageList = ({
               <React.Fragment key={m.id}>
                 {dateDivider}
                 <div className={`msg msg--image-only ${isOwn ? 'msg--own' : 'msg--other'}`} data-msg-id={m.id}>
-                  {renderMsgAvatar(m.userId, m.nickname)}
+                  {renderMsgAvatar(m.userId, m.nickname, m.id)}
                   <div className="msg-swipe-glow msg-swipe-glow--reply" />
                   <div className="msg-swipe-glow msg-swipe-glow--delete" />
                   <div className="msg-content msg-content--image-only">
@@ -709,7 +772,7 @@ const MessageList = ({
                 ].filter(Boolean).join(' ')}
                 data-msg-id={m.id}
               >
-                {isGroupStart ? renderMsgAvatar(m.userId, m.nickname) : (
+                {isGroupStart ? renderMsgAvatar(m.userId, m.nickname, m.id) : (
                   <div className="msg-avatar msg-avatar--placeholder" />
                 )}
                 <div className="msg-swipe-glow msg-swipe-glow--reply" />
