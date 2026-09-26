@@ -10,6 +10,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 
 const MAX_UPLOAD_MB = 25;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+// [2.50.0] Видео-файлы — 100 МБ как на бэке.
+const MAX_VIDEO_MB = 100;
+const MAX_VIDEO_BYTES = MAX_VIDEO_MB * 1024 * 1024;
 
 export const useChat = ({
   sendMessage,
@@ -193,8 +196,21 @@ export const useChat = ({
       return;
     }
 
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setErrorMessage(`Файл больше ${MAX_UPLOAD_MB} МБ`);
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+
+    if (!isImage && !isVideo) {
+      setErrorMessage('Только фото или видео');
+      e.target.value = '';
+      setTimeout(() => setErrorMessage(''), 4000);
+      return;
+    }
+
+    const limitMb = isVideo ? MAX_VIDEO_MB : MAX_UPLOAD_MB;
+    const limitBytes = isVideo ? MAX_VIDEO_BYTES : MAX_UPLOAD_BYTES;
+
+    if (file.size > limitBytes) {
+      setErrorMessage(`Файл больше ${limitMb} МБ`);
       e.target.value = '';
       setTimeout(() => setErrorMessage(''), 4000);
       return;
@@ -205,22 +221,39 @@ export const useChat = ({
     formData.append('file', file);
 
     try {
-      const res = await fetch('https://api.banjoboy420.ru/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
+      const endpoint = isVideo
+        ? 'https://api.banjoboy420.ru/api/upload-video'
+        : 'https://api.banjoboy420.ru/api/upload';
+
+      const res = await fetch(endpoint, { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
-      sendMessageRef.current({
-        type: 'message',
-        data: { text: '', imageUrl: data.imageUrl, replyTo: replyToRef.current || null },
-      });
+
+      if (isVideo) {
+        sendMessageRef.current({
+          type: 'message',
+          data: {
+            text: '',
+            videoUrl: data.videoUrl,
+            videoDuration: 0,
+            videoMime: file.type,
+            isCircle: false,
+            replyTo: replyToRef.current || null,
+          },
+        });
+      } else {
+        sendMessageRef.current({
+          type: 'message',
+          data: { text: '', imageUrl: data.imageUrl, replyTo: replyToRef.current || null },
+        });
+      }
+
       if (audioRef.current) audioRef.current.playSend();
       setReplyTo(null);
       e.target.value = '';
     } catch (err) {
-      console.error('Ошибка загрузки фото:', err);
-      setErrorMessage('Не удалось загрузить фото: ' + (err?.message || ''));
+      console.error('Ошибка загрузки файла:', err);
+      setErrorMessage('Не удалось загрузить: ' + (err?.message || ''));
     } finally {
       setIsUploading(false);
     }

@@ -31,6 +31,9 @@ import { useVideoRecorder, extFromVideoMime } from '../hooks/useVideoRecorder';
 
 const MAX_UPLOAD_MB = 25;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+// [2.50.0] Видео-файлы — 100 МБ.
+const MAX_VIDEO_MB = 100;
+const MAX_VIDEO_BYTES = MAX_VIDEO_MB * 1024 * 1024;
 const API_URL = 'https://api.banjoboy420.ru';
 
 const SWIPE_THRESHOLD = 90;
@@ -418,23 +421,64 @@ const PrivateChat = ({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) { setUploadError('Только изображения'); setTimeout(() => setUploadError(''), 4000); return; }
-    if (file.size > MAX_UPLOAD_BYTES) { setUploadError(`Файл больше ${MAX_UPLOAD_MB} МБ`); setTimeout(() => setUploadError(''), 4000); return; }
+
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+
+    if (!isImage && !isVideo) {
+      setUploadError('Только фото или видео');
+      setTimeout(() => setUploadError(''), 4000);
+      return;
+    }
+
+    const limitMb = isVideo ? MAX_VIDEO_MB : MAX_UPLOAD_MB;
+    const limitBytes = isVideo ? MAX_VIDEO_BYTES : MAX_UPLOAD_BYTES;
+
+    if (file.size > limitBytes) {
+      setUploadError(`Файл больше ${limitMb} МБ`);
+      setTimeout(() => setUploadError(''), 4000);
+      return;
+    }
 
     setIsUploading(true);
     setUploadError('');
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_URL}/api/upload`, { method: 'POST', body: fd });
+
+      const endpoint = isVideo
+        ? `${API_URL}/api/upload-video`
+        : `${API_URL}/api/upload`;
+
+      const res = await fetch(endpoint, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
-      sendMessage({ type: 'private_message', data: { recipientId: userId, text: '', imageUrl: data.imageUrl } });
+
+      if (isVideo) {
+        sendMessage({
+          type: 'private_message',
+          data: {
+            recipientId: userId,
+            text: '',
+            videoUrl: data.videoUrl,
+            videoDuration: 0,
+            videoMime: file.type,
+            isCircle: false,
+          },
+        });
+      } else {
+        sendMessage({
+          type: 'private_message',
+          data: { recipientId: userId, text: '', imageUrl: data.imageUrl },
+        });
+      }
     } catch (err) {
-      console.error('Ошибка загрузки фото:', err);
+      console.error('Ошибка загрузки файла:', err);
       setUploadError('Не удалось загрузить');
       setTimeout(() => setUploadError(''), 4000);
-    } finally { setIsUploading(false); }
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const sendReaction = (messageId, emoji) => {
@@ -932,7 +976,7 @@ const PrivateChat = ({
               type="file"
               ref={fileInputRef}
               onChange={handleFileUpload}
-              accept="image/*"
+              accept="image/*,video/*"
               style={{ display: 'none' }}
             />
             <ChatInput

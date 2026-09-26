@@ -1827,7 +1827,7 @@ const Chat = () => {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept="image/*"
+                accept="image/*,video/*"
                 style={{ display: 'none' }}
               />
               <ChatInput
