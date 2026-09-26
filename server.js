@@ -28,7 +28,7 @@ const webpush = require('web-push');
 // [2.24.0] Голосовые
 // [2.23.4] dialogs: lastFromMe + lastIsRead
 // [2.23.0] Стикеры
-const VERSION = '2.28.4';
+const VERSION = '2.28.5';
 const PORT = process.env.PORT || 3000;
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_MESSAGES = 100;
@@ -174,6 +174,22 @@ app.use(express.json());
 const clientErrorBuckets = new Map();
 const CLIENT_ERROR_WINDOW_MS = 60 * 1000;
 const CLIENT_ERROR_MAX = 30;
+
+// [2.28.5] Rate limit на login/register — защита от брута и спама
+// регистрациями. 10 попыток за 15 минут на IP.
+const authBuckets = new Map();
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_MAX_ATTEMPTS = 10;
+
+function checkAuthRate(ip) {
+  const now = Date.now();
+  const stamps = (authBuckets.get(ip) || [])
+    .filter(t => now - t < AUTH_WINDOW_MS);
+  if (stamps.length >= AUTH_MAX_ATTEMPTS) return false;
+  stamps.push(now);
+  authBuckets.set(ip, stamps);
+  return true;
+}
 
 function checkClientErrorRate(ip) {
   const now = Date.now();
@@ -729,6 +745,12 @@ app.get('/api/instagram-thumb', async (req, res) => {
 
 // ===== РЕГИСТРАЦИЯ =====
 app.post('/api/register', async (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+    .toString().split(',')[0].trim();
+  if (!checkAuthRate(ip)) {
+    return res.status(429).json({ error: 'Слишком много попыток. Подожди 15 минут.' });
+  }
+
   const { nickname, password } = req.body;
   if (!nickname || !password) {
     return res.status(400).json({ error: 'Nickname and password required' });
@@ -772,13 +794,20 @@ app.post('/api/register', async (req, res) => {
 
   const token = jwt.sign(
     { userId: user.id, nickname: user.nickname, role: user.role },
-    JWT_SECRET
+    JWT_SECRET,
+    { expiresIn: '30d' }
   );
   res.json({ token, nickname: user.nickname, role: user.role });
 });
 
 // ===== ВХОД =====
 app.post('/api/login', async (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+    .toString().split(',')[0].trim();
+  if (!checkAuthRate(ip)) {
+    return res.status(429).json({ error: 'Слишком много попыток. Подожди 15 минут.' });
+  }
+
   const { nickname, password } = req.body;
   if (!nickname || !password) {
     return res.status(400).json({ error: 'Nickname and password required' });
@@ -805,7 +834,8 @@ app.post('/api/login', async (req, res) => {
 
   const token = jwt.sign(
     { userId: user.id, nickname: user.nickname, role: user.role },
-    JWT_SECRET
+    JWT_SECRET,
+    { EXPIRESIN: '30D' }
   );
   res.json({ token, nickname: user.nickname, role: user.role });
 });
@@ -1574,7 +1604,12 @@ wss.on('connection', ws => {
 
         log('info', `Пользователь авторизован: ${current.nickname} (${current.role})`);
       } catch (err) {
-        ws.close(4003, 'Invalid token');
+        // [2.28.5] 300мс задержки при неверном токене — перебор
+        // невалидных токенов замедляется в тысячи раз. Легитимный
+        // юзер с истёкшим токеном не заметит.
+        setTimeout(() => {
+          try { ws.close(4003, 'Invalid token'); } catch { /* noop */ }
+        }, 300);
       }
       return;
     }
