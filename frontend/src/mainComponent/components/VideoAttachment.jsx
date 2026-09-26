@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ReactionWheel from './ReactionWheel';
 
 /*
+  [2.50.6] Fullscreen видео-файла — свои контролы, без нативных.
+           Кнопка mute слева, реакция 😀 справа, реакции сверху.
+           Как в VideoMessage. Свайп вниз — закрыть.
   [2.50.2] Видео-файл. Прямоугольник по aspect ratio видео. Без границ,
            без обводок — как image-only. Тап — play/pause, кнопки mute
            и fullscreen в углу. Автоплей не делаем — только по тапу.
-           Fullscreen через createPortal — как у кружка.
 */
 
 let currentlyPlayingAttachment = null;
+
+const SWIPE_CLOSE_PX = 90;
+const WHEEL_NEED_PX = 136;
 
 const Icon = {
   Play: () => (
@@ -50,14 +56,39 @@ const Icon = {
   ),
 };
 
-const VideoAttachment = ({ url, isOwn = false }) => {
+const VideoAttachment = ({
+  url,
+  isOwn = false,
+  messageId = null,
+  reactions = null,
+  nickname = null,
+  onReact = null,
+}) => {
   const videoRef = useRef(null);
   const fsRef = useRef(null);
+  const fsOverlayRef = useRef(null);
+  const fsStageRef = useRef(null);
+
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [fsOpen, setFsOpen] = useState(false);
+  const [fsPlaying, setFsPlaying] = useState(false);
   const [ready, setReady] = useState(false);
-  const [aspect, setAspect] = useState(16 / 9);
+
+  const [fsWheel, setFsWheel] = useState(null);
+  const [fsReactionListEmoji, setFsReactionListEmoji] = useState(null);
+
+  const fsGestureRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    lastY: 0,
+    direction: null,
+  });
+
+  const canReact = !!onReact && !!messageId && !!nickname;
+  const reactionEntries = reactions ? Object.entries(reactions) : [];
+  const hasReactions = reactionEntries.length > 0;
 
   useEffect(() => {
     const v = videoRef.current;
@@ -65,9 +96,6 @@ const VideoAttachment = ({ url, isOwn = false }) => {
     const onLoadedMeta = () => {
       setReady(true);
       try {
-        if (v.videoWidth && v.videoHeight) {
-          setAspect(v.videoWidth / v.videoHeight);
-        }
         if (v.currentTime < 0.01) v.currentTime = 0.001;
       } catch { /* noop */ }
     };
@@ -85,9 +113,24 @@ const VideoAttachment = ({ url, isOwn = false }) => {
     };
   }, []);
 
+  // Пауза мелкого видео при открытии fullscreen
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v && fsOpen) {
+      try { v.pause(); } catch { /* noop */ }
+      setPlaying(false);
+    }
+  }, [fsOpen]);
+
   useEffect(() => {
     if (!fsOpen) return;
-    const onKey = (e) => { if (e.key === 'Escape') setFsOpen(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setFsOpen(false);
+        setFsWheel(null);
+        setFsReactionListEmoji(null);
+      }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [fsOpen]);
@@ -121,14 +164,110 @@ const VideoAttachment = ({ url, isOwn = false }) => {
   };
 
   const openFs = (e) => { e.stopPropagation(); setFsOpen(true); };
-  const closeFs = (e) => { if (e) e.stopPropagation(); setFsOpen(false); };
+  const closeFs = (e) => {
+    if (e) e.stopPropagation();
+    setFsOpen(false);
+    setFsWheel(null);
+    setFsReactionListEmoji(null);
+  };
+
+  const handleFsPlayToggle = (e) => {
+    e.stopPropagation();
+    const v = fsRef.current;
+    if (!v) return;
+    if (fsPlaying) { v.pause(); setFsPlaying(false); }
+    else { v.play().then(() => setFsPlaying(true)).catch(() => { /* noop */ }); }
+  };
+
+  // Свайп вниз — закрыть
+  const onOverlayTouchStart = (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    fsGestureRef.current = {
+      active: true,
+      startX: t.clientX,
+      startY: t.clientY,
+      lastY: t.clientY,
+      direction: null,
+    };
+  };
+
+  const onOverlayTouchMove = (e) => {
+    const g = fsGestureRef.current;
+    if (!g.active) return;
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - g.startX;
+    const dy = t.clientY - g.startY;
+    g.lastY = t.clientY;
+
+    if (!g.direction) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      g.direction = Math.abs(dy) > Math.abs(dx) ? 'v' : 'h';
+    }
+    if (g.direction !== 'v') return;
+    if (e.cancelable) e.preventDefault();
+
+    if (dy > 0) {
+      const el = fsOverlayRef.current;
+      const stage = fsStageRef.current;
+      const p = Math.min(1, dy / 320);
+      if (el) el.style.background = `rgba(10, 10, 10, ${0.95 - p * 0.6})`;
+      if (stage) {
+        stage.style.transition = 'none';
+        stage.style.transform = `translateY(${dy}px) scale(${1 - p * 0.08})`;
+        stage.style.opacity = String(1 - p * 0.4);
+      }
+    }
+  };
+
+  const onOverlayTouchEnd = () => {
+    const g = fsGestureRef.current;
+    if (!g.active) return;
+    const dy = g.lastY - g.startY;
+    g.active = false;
+
+    if (g.direction === 'v' && dy > SWIPE_CLOSE_PX) {
+      closeFs();
+      return;
+    }
+
+    const el = fsOverlayRef.current;
+    const stage = fsStageRef.current;
+    if (el) { el.style.transition = 'background 0.24s'; el.style.background = ''; }
+    if (stage) {
+      stage.style.transition = 'transform 0.24s cubic-bezier(0.25,1,0.5,1), opacity 0.24s';
+      stage.style.transform = '';
+      stage.style.opacity = '1';
+      setTimeout(() => {
+        if (stage) stage.style.transition = '';
+        if (el) el.style.transition = '';
+      }, 260);
+    }
+    g.direction = null;
+  };
+
+  const handleToggleWheel = (e) => {
+    e.stopPropagation();
+    if (fsWheel) { setFsWheel(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const x = Math.max(WHEEL_NEED_PX, Math.min(window.innerWidth - WHEEL_NEED_PX, cx));
+    const y = Math.max(WHEEL_NEED_PX, Math.min(window.innerHeight - WHEEL_NEED_PX, cy));
+    setFsWheel({ x, y });
+  };
+
+  const handlePick = (emoji) => {
+    if (onReact && messageId) onReact(messageId, emoji);
+    setFsWheel(null);
+  };
 
   return (
     <>
       <div className={`video-attachment ${isOwn ? 'video-attachment--own' : ''}`}>
         <div
           className="video-attachment-frame"
-          style={{ aspectRatio: String(aspect) }}
           onClick={toggle}
         >
           <video
@@ -170,25 +309,125 @@ const VideoAttachment = ({ url, isOwn = false }) => {
       </div>
 
       {fsOpen && typeof document !== 'undefined' && createPortal(
-        <div className="video-attachment-fs" onClick={closeFs}>
-          <button
-            type="button"
-            className="video-attachment-fs-close"
-            onClick={closeFs}
-            aria-label="Закрыть"
-          >
-            <Icon.Close />
-          </button>
-          <video
-            ref={fsRef}
-            src={url}
-            className="video-attachment-fs-el"
-            autoPlay
-            playsInline
-            controls
-            muted={muted}
-            onClick={(e) => e.stopPropagation()}
-          />
+        <div
+          className="fullscreen-overlay"
+          ref={fsOverlayRef}
+          onClick={closeFs}
+          onTouchStart={onOverlayTouchStart}
+          onTouchMove={onOverlayTouchMove}
+          onTouchEnd={onOverlayTouchEnd}
+          onTouchCancel={onOverlayTouchEnd}
+        >
+          <div className="fs-topbar" onClick={(e) => e.stopPropagation()}>
+            <div className="fs-author" />
+            <button
+              type="button"
+              className="fs-close"
+              onClick={closeFs}
+              aria-label="Закрыть"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="fs-stage" ref={fsStageRef} onClick={closeFs}>
+            <video
+              ref={fsRef}
+              src={url}
+              className="fs-image"
+              playsInline
+              muted={muted}
+              onClick={handleFsPlayToggle}
+              onPlay={() => setFsPlaying(true)}
+              onPause={() => setFsPlaying(false)}
+              onEnded={() => setFsPlaying(false)}
+            />
+
+            {!fsPlaying && (
+              <button
+                type="button"
+                className="fs-video-play"
+                onClick={handleFsPlayToggle}
+                aria-label="Воспроизвести"
+              >
+                <Icon.Play />
+              </button>
+            )}
+          </div>
+
+          <div className="fs-bottombar fs-video-bottombar" onClick={(e) => e.stopPropagation()}>
+            {hasReactions && (
+              <div className="fs-reactions-strip">
+                {reactionEntries.map(([emoji, users]) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className={`fs-reaction-badge ${users.includes(nickname) ? 'own' : ''}`}
+                    onClick={() => setFsReactionListEmoji(prev => prev === emoji ? null : emoji)}
+                  >
+                    <span className="fs-reaction-badge-emoji">{emoji}</span>
+                    <span className="fs-reaction-badge-count">{users.length}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="fs-video-bottombar-actions">
+              <button
+                type="button"
+                className="fs-reaction-toggle"
+                onClick={toggleMute}
+                aria-label={muted ? 'Включить звук' : 'Выключить звук'}
+              >
+                {muted ? <Icon.Mute /> : <Icon.Sound />}
+              </button>
+              {canReact && (
+                <button
+                  type="button"
+                  className={`fs-reaction-toggle fs-reaction-toggle--react ${fsWheel ? 'active' : ''}`}
+                  onClick={handleToggleWheel}
+                  aria-label="Реакции"
+                >
+                  😀
+                </button>
+              )}
+            </div>
+          </div>
+
+          {fsReactionListEmoji && reactions?.[fsReactionListEmoji] && (
+            <div className="fs-reaction-list" onClick={(e) => e.stopPropagation()}>
+              <div className="fs-reaction-list-header">
+                <span className="fs-reaction-list-emoji">{fsReactionListEmoji}</span>
+                <span className="fs-reaction-list-count">
+                  {reactions[fsReactionListEmoji].length}
+                </span>
+              </div>
+              <div className="fs-reaction-list-users">
+                {reactions[fsReactionListEmoji].map((u, i) => (
+                  <span key={i} className="fs-reaction-user">{u}</span>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="fs-reaction-list-close"
+                onClick={() => setFsReactionListEmoji(null)}
+              >
+                Закрыть
+              </button>
+            </div>
+          )}
+
+          {fsWheel && canReact && (
+            <ReactionWheel
+              open
+              anchorX={fsWheel.x}
+              anchorY={fsWheel.y}
+              reactions={reactions || {}}
+              nickname={nickname}
+              onPick={handlePick}
+              onClose={() => setFsWheel(null)}
+              ignoreSelector=".fs-reaction-toggle"
+            />
+          )}
         </div>,
         document.body
       )}

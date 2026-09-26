@@ -1236,6 +1236,7 @@ const Chat = () => {
           videoUrl: data.videoUrl,
           videoDuration: result.duration,
           videoMime: result.mime,
+          isCircle: true,
         },
       });
     } catch (err) {

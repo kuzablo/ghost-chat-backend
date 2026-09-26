@@ -104,6 +104,9 @@ const PrivateChat = ({
   const [videoUploading, setVideoUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [fsReactionAnchor, setFsReactionAnchor] = useState(null);
+  const [showFsReactions, setShowFsReactions] = useState(false);
+  const [fsReactionListEmoji, setFsReactionListEmoji] = useState(null);
   const [stickerPanelOpen, setStickerPanelOpen] = useState(false);
   const [bgLoaded, setBgLoaded] = useState(false);
   const [actionsMenu, setActionsMenu] = useState(null);
@@ -659,6 +662,7 @@ const PrivateChat = ({
           videoUrl: data.videoUrl,
           videoDuration: result.duration,
           videoMime: result.mime,
+          isCircle: true,
         },
       });
     } catch (err) {
@@ -881,7 +885,14 @@ const PrivateChat = ({
                             onReact={sendReaction}
                           />
                         ) : (
-                          <VideoAttachment url={m.videoUrl} isOwn={isOwn} />
+                          <VideoAttachment
+                            url={m.videoUrl}
+                            isOwn={isOwn}
+                            messageId={m.id}
+                            reactions={m.reactions || {}}
+                            nickname={myId}
+                            onReact={sendReaction}
+                          />
                         )}
                         {m.reactions && Object.keys(m.reactions).length > 0 && (
                           <div className="msg-video-reactions">
@@ -926,7 +937,7 @@ const PrivateChat = ({
                             wrapperClassName="private-msg-image-smart"
                             imgClassName="private-msg-image"
                             draggable={false}
-                            onClick={(e) => { e.stopPropagation(); setFullscreenImage(m.imageUrl); }}
+                            onClick={(e) => { e.stopPropagation(); setFullscreenImage({ url: m.imageUrl, messageId: m.id }); }}
                           />
                         )}
                         {m.text && <span className="private-msg-text">{m.text}</span>}
@@ -1110,12 +1121,127 @@ const PrivateChat = ({
         onToggleFavorite={onToggleFavorite}
       />
 
-      {fullscreenImage && (
-        <div className="private-image-overlay" onClick={() => setFullscreenImage(null)}>
-          <img src={fullscreenImage} alt="" className="private-image-full" onClick={(e) => e.stopPropagation()} />
-          <button type="button" className="private-image-close" onClick={() => setFullscreenImage(null)} aria-label="Закрыть">✕</button>
-        </div>
-      )}
+      {fullscreenImage && (() => {
+        const activeFsMsg = initialMessages.find(m => m.id === fullscreenImage.messageId);
+        const fsReactions = activeFsMsg?.reactions || {};
+        const fsReactionEntries = Object.entries(fsReactions);
+        const fsHasReactions = fsReactionEntries.length > 0;
+
+        return (
+          <div
+            className="fullscreen-overlay"
+            onClick={() => { setFullscreenImage(null); setShowFsReactions(false); setFsReactionListEmoji(null); }}
+          >
+            <div className="fs-topbar" onClick={(e) => e.stopPropagation()}>
+              <div className="fs-author">
+                <div
+                  className="fs-author-avatar"
+                  style={{ background: getAvatarColor(nickname || '?') }}
+                >
+                  {getInitial(nickname || '?')}
+                </div>
+                <div className="fs-author-meta">
+                  <div className="fs-author-nick">{nickname}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="fs-close"
+                onClick={(e) => { e.stopPropagation(); setFullscreenImage(null); setShowFsReactions(false); setFsReactionListEmoji(null); }}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="fs-stage" onClick={() => { setFullscreenImage(null); setShowFsReactions(false); setFsReactionListEmoji(null); }}>
+              <img
+                src={fullscreenImage.url}
+                alt=""
+                className="fs-image"
+                draggable={false}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
+            <div className="fs-bottombar" onClick={(e) => e.stopPropagation()}>
+              {fsHasReactions && (
+                <div className="fs-reactions-strip">
+                  {fsReactionEntries.map(([emoji, users]) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={`fs-reaction-badge ${users.includes(myId) ? 'own' : ''}`}
+                      onClick={() =>
+                        setFsReactionListEmoji(prev => (prev === emoji ? null : emoji))
+                      }
+                    >
+                      <span className="fs-reaction-badge-emoji">{emoji}</span>
+                      <span className="fs-reaction-badge-count">{users.length}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className={`fs-reaction-toggle ${showFsReactions ? 'active' : ''}`}
+                onClick={(e) => {
+                  if (showFsReactions) { setShowFsReactions(false); return; }
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const cx = rect.left + rect.width / 2;
+                  const cy = rect.top + rect.height / 2;
+                  const x = Math.max(136, Math.min(window.innerWidth - 136, cx));
+                  const y = Math.max(136, Math.min(window.innerHeight - 136, cy));
+                  setFsReactionAnchor({ x, y });
+                  setShowFsReactions(true);
+                }}
+                aria-label="Реакции"
+              >
+                😀
+              </button>
+            </div>
+
+            {showFsReactions && fsReactionAnchor && fullscreenImage.messageId && (
+              <ReactionWheel
+                open
+                anchorX={fsReactionAnchor.x}
+                anchorY={fsReactionAnchor.y}
+                reactions={fsReactions}
+                nickname={myId}
+                onPick={(emoji) => {
+                  sendReaction(fullscreenImage.messageId, emoji);
+                  setShowFsReactions(false);
+                }}
+                onClose={() => setShowFsReactions(false)}
+                ignoreSelector=".fs-reaction-toggle"
+              />
+            )}
+
+            {fsReactionListEmoji && fsReactions[fsReactionListEmoji] && (
+              <div className="fs-reaction-list" onClick={(e) => e.stopPropagation()}>
+                <div className="fs-reaction-list-header">
+                  <span className="fs-reaction-list-emoji">{fsReactionListEmoji}</span>
+                  <span className="fs-reaction-list-count">
+                    {fsReactions[fsReactionListEmoji].length}
+                  </span>
+                </div>
+                <div className="fs-reaction-list-users">
+                  {fsReactions[fsReactionListEmoji].map((u, i) => (
+                    <span key={i} className="fs-reaction-user">{u}</span>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="fs-reaction-list-close"
+                  onClick={() => setFsReactionListEmoji(null)}
+                >
+                  Закрыть
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </>
   );
 };

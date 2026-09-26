@@ -615,7 +615,14 @@ const MessageList = ({
                         onReact={sendReaction}
                       />
                     ) : (
-                      <VideoAttachment url={m.videoUrl} isOwn={isOwn} />
+                      <VideoAttachment
+                        url={m.videoUrl}
+                        isOwn={isOwn}
+                        messageId={m.id}
+                        reactions={m.reactions || {}}
+                        nickname={nickname}
+                        onReact={sendReaction}
+                      />
                     )}
                     {hasReactions(m) && (
                       <div className="msg-video-reactions">
