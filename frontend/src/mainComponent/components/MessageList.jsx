@@ -5,6 +5,7 @@ import MessageActionsMenu from './MessageActionsMenu';
 import ReactionWheel from './ReactionWheel';
 import VoiceMessage from './VoiceMessage';
 import VideoMessage from './VideoMessage';
+import VideoAttachment from './VideoAttachment';
 import SmartImage from './SmartImage';
 import Avatar from './Avatar';
 
@@ -602,15 +603,19 @@ const MessageList = ({
                       <span className="msg-nick">{m.nickname}</span>
                       <span className="msg-time">{formatMessageDate(m.time)}</span>
                     </div>
-                    <VideoMessage
-                      url={m.videoUrl}
-                      isOwn={isOwn}
-                      createdAt={m.time}
-                      messageId={m.id}
-                      reactions={m.reactions || {}}
-                      nickname={nickname}
-                      onReact={sendReaction}
-                    />
+                    {m.isCircle ? (
+                      <VideoMessage
+                        url={m.videoUrl}
+                        isOwn={isOwn}
+                        createdAt={m.time}
+                        messageId={m.id}
+                        reactions={m.reactions || {}}
+                        nickname={nickname}
+                        onReact={sendReaction}
+                      />
+                    ) : (
+                      <VideoAttachment url={m.videoUrl} isOwn={isOwn} />
+                    )}
                     {hasReactions(m) && (
                       <div className="msg-video-reactions">
                         {Object.entries(m.reactions).map(([emoji, users]) => (

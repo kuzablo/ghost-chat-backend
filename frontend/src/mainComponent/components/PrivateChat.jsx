@@ -8,6 +8,7 @@ import MessageActionsMenu from './MessageActionsMenu';
 import ReactionWheel from './ReactionWheel';
 import VoiceMessage from './VoiceMessage';
 import VideoMessage from './VideoMessage';
+import VideoAttachment from './VideoAttachment';
 import VoiceRecordingOverlay from './VoiceRecordingOverlay';
 import VideoRecordingOverlay from './VideoRecordingOverlay';
 import ConfirmModal from './ConfirmModal';
@@ -868,15 +869,19 @@ const PrivateChat = ({
                         onTouchEnd={handleMsgTouchEnd}
                       >
                         {forwardLabel}
-                        <VideoMessage
-                          url={m.videoUrl}
-                          isOwn={isOwn}
-                          createdAt={m.created_at}
-                          messageId={m.id}
-                          reactions={m.reactions || {}}
-                          nickname={myId}
-                          onReact={sendReaction}
-                        />
+                        {m.isCircle ? (
+                          <VideoMessage
+                            url={m.videoUrl}
+                            isOwn={isOwn}
+                            createdAt={m.created_at}
+                            messageId={m.id}
+                            reactions={m.reactions || {}}
+                            nickname={myId}
+                            onReact={sendReaction}
+                          />
+                        ) : (
+                          <VideoAttachment url={m.videoUrl} isOwn={isOwn} />
+                        )}
                         {m.reactions && Object.keys(m.reactions).length > 0 && (
                           <div className="msg-video-reactions">
                             {Object.entries(m.reactions).map(([emoji, users]) => (
